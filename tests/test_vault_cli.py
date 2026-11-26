@@ -23,6 +23,16 @@ def make_folder(tmp_path, name="docs"):
 @pytest.fixture
 def passwords(monkeypatch):
     queue = []
+    # the tests below simulate a real console: stdin looks like a tty,
+    # and the queued strings are what getpass "reads"
+    class FakeTty:
+        def isatty(self):
+            return True
+
+        def readline(self, limit=-1):
+            return ""
+
+    monkeypatch.setattr("sys.stdin", FakeTty())
     monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": queue.pop(0))
     return queue
 
@@ -76,6 +86,16 @@ def test_password_prompt_shows_the_compartment(tmp_path, passwords, capsys, monk
     monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": seen.append(prompt) or "longenough")
     cli.main(["create", str(tmp_path / "v.valt"), "--folder", str(folder), "--label", "docs"])
     assert any("(for 'docs')" in p for p in seen)
+
+
+def test_password_falls_back_to_redirected_stdin(monkeypatch):
+    # when input is redirected (script/pipe), getpass would read the console
+    # and block - ask_password takes the line from stdin instead
+    import io
+    fake = io.StringIO("piped password line\n")
+    fake.isatty = lambda: False
+    monkeypatch.setattr("sys.stdin", fake)
+    assert cli.ask_password() == "piped password line"
 
 
 # ---------- the guardrails ----------

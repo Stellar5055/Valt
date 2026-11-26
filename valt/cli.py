@@ -7,6 +7,16 @@ from cryptography.exceptions import InvalidTag
 
 def ask_password(confirm=False, for_name=None):
     who = f" (for '{for_name}')" if for_name else ""
+
+    if not sys.stdin.isatty():
+        # input is redirected (script/pipe): getpass would read the console
+        # directly and block - take the line from stdin instead
+        pw = sys.stdin.readline().rstrip("\r\n")
+        if len(pw) < 8:
+            print("Password must be at least 8 characters")
+            sys.exit(1)
+        return pw
+
     while True:
         pw = getpass.getpass(f"Password{who}: ")
 
