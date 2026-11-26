@@ -1,19 +1,21 @@
-"""Stage 7 — automatic checks for valt/vault.py.
+"""Stage 7 — checks for valt/vault.py (v1.1).
 
 The Valt moment: one file, many passwords, each seeing only its own world.
-Acceptance tests 3, 4 and 6 live here.
+Acceptance tests 3, 4 and 6 live here. v1.1: no size/slots input, no waste.
 Run from the repo root:   .venv\\Scripts\\python -m pytest -v
 """
 import hashlib
+import math
 import os
 
 import pytest
 
-from valt.container import create_empty, FormatError
+from valt.crypto import random_bytes
+from valt.container import write_skeleton, read_header, FormatError
+from valt.unpacker import extract_all
 from valt.vault import create, open_container
 
-SIZE = 5 * 1024 * 1024   # 5 MiB: with 4 slots -> segments of ~1.25 MiB (>= 1 MiB minimum)
-SLOTS = 4
+SLOTS = 4   # 3 compartments + 2 spares would be 5; 4 keeps this test light
 
 
 def sha(b):
@@ -23,7 +25,7 @@ def sha(b):
 def make_folders(tmp_path):
     photos = tmp_path / "photos"; photos.mkdir()
     (photos / "beach.txt").write_bytes(b"sand " * 100)
-    (photos / "sunset.txt").write_bytes(random_junk(300))
+    (photos / "sunset.txt").write_bytes(random_bytes(300))
     taxes = tmp_path / "taxes"; taxes.mkdir()
     (taxes / "IRS.txt").write_bytes(b"numbers " * 50)
     docs = tmp_path / "docs"; docs.mkdir()
@@ -31,15 +33,10 @@ def make_folders(tmp_path):
     return photos, taxes, docs
 
 
-def random_junk(n):
-    from valt.crypto import random_bytes
-    return random_bytes(n)
-
-
 def test_each_password_sees_only_its_own_world(tmp_path):
     photos, taxes, docs = make_folders(tmp_path)
     p = tmp_path / "v.valt"
-    create(p, SIZE, SLOTS, [
+    create(p, [
         (str(photos), "pwA", "photos"),
         (str(taxes), "pwB", "taxes"),
         (str(docs), "pwC", "docs"),
@@ -60,7 +57,7 @@ def test_each_password_sees_only_its_own_world(tmp_path):
 def test_never_used_password_returns_empty(tmp_path):
     photos, taxes, docs = make_folders(tmp_path)
     p = tmp_path / "v.valt"
-    create(p, SIZE, SLOTS, [
+    create(p, [
         (str(photos), "pwA", "photos"),
         (str(taxes), "pwB", "taxes"),
         (str(docs), "pwC", "docs"),
@@ -68,13 +65,13 @@ def test_never_used_password_returns_empty(tmp_path):
     assert open_container(p, "banana") == []      # acceptance test 3
 
 
-def test_empty_container_and_full_container_behave_identically(tmp_path):
+def test_empty_vault_and_full_vault_behave_identically(tmp_path):
     empty = tmp_path / "empty.valt"
-    create_empty(empty, SIZE, SLOTS)
+    write_skeleton(empty, SLOTS)
 
     full = tmp_path / "full.valt"
     photos, _, _ = make_folders(tmp_path)
-    create(full, SIZE, SLOTS, [(str(photos), "pwA", "photos")])
+    create(full, [(str(photos), "pwA", "photos")])
 
     # the app cannot tell these two apart by asking with a password
     assert open_container(empty, "anything") == []
@@ -84,7 +81,7 @@ def test_empty_container_and_full_container_behave_identically(tmp_path):
 def test_same_password_opens_two_compartments(tmp_path):
     photos, taxes, docs = make_folders(tmp_path)
     p = tmp_path / "v.valt"
-    create(p, SIZE, SLOTS, [
+    create(p, [
         (str(photos), "one pw", "photos"),
         (str(taxes), "one pw", "taxes"),
     ])
@@ -96,7 +93,7 @@ def test_same_password_opens_two_compartments(tmp_path):
 def test_compartments_get_fresh_folder_keys(tmp_path):
     photos, taxes, docs = make_folders(tmp_path)
     p = tmp_path / "v.valt"
-    create(p, SIZE, SLOTS, [
+    create(p, [
         (str(photos), "pwA", "photos"),
         (str(taxes), "pwA", "taxes"),              # same password, two slots
     ])
@@ -104,24 +101,40 @@ def test_compartments_get_fresh_folder_keys(tmp_path):
     assert seen[0]["folder_key"] != seen[1]["folder_key"]   # SPEC Law 1, observable
 
 
-def test_two_containers_from_same_input_differ(tmp_path):
-    photos, taxes, docs = make_folders(tmp_path)
+def test_two_vaults_from_same_input_differ(tmp_path):
+    photos, _, _ = make_folders(tmp_path)
     a = tmp_path / "a.valt"
     b = tmp_path / "b.valt"
-    create(a, SIZE, SLOTS, [(str(photos), "pwA", "photos")])
-    create(b, SIZE, SLOTS, [(str(photos), "pwA", "photos")])
-    assert open(a, "rb").read() != open(b, "rb").read()     # acceptance test 6
+    create(a, [(str(photos), "pwA", "photos")])
+    create(b, [(str(photos), "pwA", "photos")])
+    assert open(a, "rb").read() != open(b, "rb").read()      # acceptance test 6
+    # the random overhead keeps sizes slightly different too
+    assert abs(os.path.getsize(a) - os.path.getsize(b)) <= 8192
+
+
+def test_vault_size_is_packed_not_padded(tmp_path):
+    # v1.1: no slack -- the vault is roughly its contents, plus seals, index,
+    # safes and at most 8 KiB of random overhead
+    photos, _, _ = make_folders(tmp_path)
+    p = tmp_path / "v.valt"
+    create(p, [(str(photos), "pwA", "photos")])
+
+    content = sum(f.stat().st_size for f in photos.rglob("*") if f.is_file())
+    seals = sum(16 * math.ceil(f.stat().st_size / 65536)
+                for f in photos.rglob("*") if f.is_file())
+    # 3 safes (392 B) + index (~400 B) + overhead (<= 8192 B) + small margin
+    assert os.path.getsize(p) <= 392 + content + seals + 1024 + 8192 + 512
 
 
 def test_full_stack_round_trip_through_open(tmp_path):
     photos, _, _ = make_folders(tmp_path)
     p = tmp_path / "v.valt"
-    create(p, SIZE, SLOTS, [(str(photos), "pwA", "photos")])
+    create(p, [(str(photos), "pwA", "photos")])
 
-    from valt.unpacker import extract_all
     comp = open_container(p, "pwA")[0]
     dest = tmp_path / "out"
-    extract_all(p, comp["slot"], comp["folder_key"], comp["index_len"], str(dest))
+    extract_all(p, comp["segment_offset"], comp["segment_len"],
+                comp["folder_key"], comp["index_len"], str(dest))
 
     for src in sorted(photos.rglob("*")):
         if src.is_file():
@@ -129,11 +142,18 @@ def test_full_stack_round_trip_through_open(tmp_path):
             assert sha(out.read_bytes()) == sha(src.read_bytes())
 
 
-def test_corrupted_container_is_rejected_by_open(tmp_path):
+def test_truncated_vault_is_rejected_by_open(tmp_path):
     photos, _, _ = make_folders(tmp_path)
     p = tmp_path / "v.valt"
-    create(p, SIZE, SLOTS, [(str(photos), "pwA", "photos")])
+    create(p, [(str(photos), "pwA", "photos")])
     data = open(p, "rb").read()
-    open(p, "wb").write(data[:-25])                # chop the tail off
+    open(p, "wb").write(data[:300])                # chop into the safes area
     with pytest.raises(FormatError):
         open_container(p, "pwA")
+
+
+def test_too_many_compartments_is_rejected(tmp_path):
+    photos, taxes, docs = make_folders(tmp_path)
+    many = [(str(photos), f"pw{i}", f"c{i}") for i in range(17)]
+    with pytest.raises(ValueError):
+        create(tmp_path / "v.valt", many)

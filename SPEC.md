@@ -9,6 +9,15 @@ This is the single source of truth for the format. It is written to be
 rule below comes with its reason. If code and this document ever disagree,
 this document wins.
 
+> **📌 REVISION v1.1 — packed, not padded (current).** The vault no longer
+> reserves junk slack: compartments are variable-length and packed
+> back-to-back (each new compartment appends at end-of-file), every safe
+> stores its compartment's `segment_offset` / `segment_len` / `index_len`
+> (name budget: 31 bytes), and the vault's total size roughly reflects how
+> much is stored (plus ≤ 8 KiB of random overhead). The size no longer hides
+> occupancy — an accepted trade. Where sections below describe equal
+> segments, junk filler, or fits-checks, this revision supersedes them.
+
 ---
 
 ## 1. The promise (what v1 must achieve)
@@ -18,9 +27,10 @@ The whole point of the project, stated as testable properties:
 - **P1 — No way in without a password.** Every byte except the first 8 is either
   ciphertext or random junk. There is no second way to read the data: no
   "open with 7-zip", no "rename to .zip", no strings in a hex editor.
-- **P2 — No proof of hidden data.** The file cannot reveal how many folders it
-  holds, their names, sizes, or file counts. An empty container and a
-  half-full one look identical from the outside.
+- **P2 — No names, no contents, no counts.** Compartment names, file lists,
+  individual file sizes, and contents are unrecoverable without their password.
+  (v1.1 trade-off: the vault's total size roughly reflects how much is stored
+  in total — accepted by design.)
 - **P3 — One password sees one world.** Password A's open shows A's folders and
   *nothing about* B's — not even that B exists.
 - **P4 — Wrong password = empty container.** The app always answers

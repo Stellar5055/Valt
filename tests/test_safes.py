@@ -1,21 +1,20 @@
-"""Stage 3 — automatic checks for valt/safes.py.
+"""Stage 3 (v1.1) — checks for valt/safes.py.
 
-The heart of the whole format: locked, empty, and broken safes must all be
-indistinguishable to the code (SPEC P2 / P4).
+Payload v1.1: folder_key + segment_offset + segment_len + index_len + name.
+Locked, empty, and broken safes must all be indistinguishable (SPEC P2 / P4).
 Run from the repo root:   .venv\\Scripts\\python -m pytest -v
 """
 import pytest
+from cryptography.exceptions import InvalidTag
 
-from valt.crypto import new_key, random_bytes, u16, u64
+from valt.crypto import new_key, random_bytes, u16
 from valt.safes import safe_aad, build_payload, parse_payload, wrap_safe, try_open_safe
 
-
-# a stand-in for the real 8-byte header: "VALT" + version 1 + 8 slots
 FAKE_HEADER = b"VALT" + u16(1) + u16(8)
 
 
 def make_payload(name="my stuff"):
-    return build_payload(new_key(), 123456, name)
+    return build_payload(new_key(), 264, 4096, 250, name)
 
 
 def wrap_at_slot(payload, password, slot):
@@ -35,13 +34,15 @@ def test_wrap_returns_exactly_128_bytes():
 
 def test_right_password_opens_the_safe_intact():
     folder_key = new_key()
-    payload = build_payload(folder_key, 123456, "my stuff")
+    payload = build_payload(folder_key, 264, 4096, 250, "my stuff")
     safe = wrap_at_slot(payload, "correct horse", 0)
     opened = open_at_slot(safe, "correct horse", 0)
     assert opened is not None
-    out_key, out_len, out_name = opened
+    out_key, out_offset, out_len, out_index, out_name = opened
     assert out_key == folder_key
-    assert out_len == 123456
+    assert out_offset == 264
+    assert out_len == 4096
+    assert out_index == 250
     assert out_name == "my stuff"
 
 
@@ -53,30 +54,28 @@ def test_wrong_password_returns_none():
 
 
 def test_128_random_bytes_returns_none():
-    # an empty safe is pure random junk -- and must be indistinguishable
     assert open_at_slot(random_bytes(128), "correct horse", 0) is None
 
 
 def test_tampered_nonce_region_returns_none():
     safe = bytearray(wrap_at_slot(make_payload(), "correct horse", 0))
-    safe[20] ^= 1                            # inside the nonce (bytes 16..27)
+    safe[20] ^= 1
     assert open_at_slot(bytes(safe), "correct horse", 0) is None
 
 
 def test_tampered_locked_region_returns_none():
     safe = bytearray(wrap_at_slot(make_payload(), "correct horse", 0))
-    safe[60] ^= 1                            # inside the locked payload
+    safe[60] ^= 1
     assert open_at_slot(bytes(safe), "correct horse", 0) is None
 
 
 def test_tampered_salt_region_returns_none():
     safe = bytearray(wrap_at_slot(make_payload(), "correct horse", 0))
-    safe[3] ^= 1                             # inside the salt -- wrong key comes out
+    safe[3] ^= 1
     assert open_at_slot(bytes(safe), "correct horse", 0) is None
 
 
 def test_safe_moved_to_another_slot_returns_none():
-    # the aad weld: this safe only opens in the slot it was wrapped for
     safe = wrap_at_slot(make_payload(), "correct horse", 0)
     assert open_at_slot(safe, "correct horse", 5) is None
 
@@ -87,11 +86,10 @@ def test_two_wraps_of_the_same_thing_look_nothing_alike():
     payload = make_payload()
     a = wrap_at_slot(payload, "correct horse", 0)
     b = wrap_at_slot(payload, "correct horse", 0)
-    assert a != b                            # fresh salt + nonce every time
+    assert a != b
 
 
 def test_malformed_payload_still_fails_closed():
-    # a payload that unlocks fine but is not a real payload -> None, not a crash
     from valt.crypto import lock, password_to_key
     salt, nonce = random_bytes(16), random_bytes(12)
     key = password_to_key("correct horse", salt)
@@ -101,24 +99,24 @@ def test_malformed_payload_still_fails_closed():
 
 # ---------- the name budget (bytes, not characters) ----------
 
-def test_name_of_43_bytes_round_trips():
-    safe = wrap_at_slot(make_payload("a" * 43), "correct horse", 0)
+def test_name_of_31_bytes_round_trips():
+    safe = wrap_at_slot(make_payload("a" * 31), "correct horse", 0)
     opened = open_at_slot(safe, "correct horse", 0)
-    assert opened[2] == "a" * 43
+    assert opened[4] == "a" * 31
 
 
-def test_name_of_44_bytes_is_rejected():
+def test_name_of_32_bytes_is_rejected():
     with pytest.raises(ValueError):
-        make_payload("a" * 44)
+        make_payload("a" * 32)
 
 
 def test_unicode_name_round_trips():
     safe = wrap_at_slot(make_payload("🔐 vault 🔐"), "correct horse", 0)
     opened = open_at_slot(safe, "correct horse", 0)
-    assert opened[2] == "🔐 vault 🔐"
+    assert opened[4] == "🔐 vault 🔐"
 
 
 def test_empty_name_is_allowed():
     opened = open_at_slot(wrap_at_slot(make_payload(""), "correct horse", 0),
                           "correct horse", 0)
-    assert opened[2] == ""
+    assert opened[4] == ""

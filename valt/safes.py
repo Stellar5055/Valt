@@ -1,5 +1,5 @@
 import struct
-from valt.crypto import random_bytes, password_to_key, unlock, lock, u64, read_u64
+from valt.crypto import random_bytes, password_to_key, unlock, lock, u64, u32, read_u64, read_u32
 from cryptography.exceptions import InvalidTag
 
 
@@ -7,30 +7,37 @@ def safe_aad(header_bytes, slot_index):
     return header_bytes + struct.pack("<H", slot_index)
 
 
-def build_payload(folder_key, index_len, name):
+def build_payload(folder_key, segment_offset, segment_len, index_len, name):
     name_bytes = name.encode("utf-8")
-    
+
     if len(folder_key) != 32:
         raise ValueError("folder_key must be 32 bytes")
 
-    if len(name_bytes) > 43:
-        raise ValueError("Name too long. max 43 bytes")
+    if len(name_bytes) > 31:
+        raise ValueError("Name too long. max 31 bytes")
 
-    payload = folder_key + u64(index_len) + bytes([len(name_bytes)]) + name_bytes
+    payload = (folder_key
+               + u64(segment_offset)
+               + u64(segment_len)
+               + u32(index_len)
+               + bytes([len(name_bytes)])
+               + name_bytes)
     payload += random_bytes(84 - len(payload))   # pad to the 84-byte budget
     return payload
 
 
 def parse_payload(payload):
     folder_key = payload[0:32]
-    index_len = read_u64(payload[32:40])
-    name_len = payload[40]
-    name = payload[41: 41 + name_len]
+    segment_offset = read_u64(payload[32:40])
+    segment_len = read_u64(payload[40:48])
+    index_len = read_u32(payload[48:52])
+    name_len = payload[52]
+    name = payload[53: 53 + name_len]
 
-    if 41 + name_len > len(payload):
+    if 53 + name_len > len(payload):
         raise ValueError("payload length mismatch")
 
-    return folder_key, index_len, name.decode("utf-8")
+    return folder_key, segment_offset, segment_len, index_len, name.decode("utf-8")
 
 
 def wrap_safe(password, payload, aad):
