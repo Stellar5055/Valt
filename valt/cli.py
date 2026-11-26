@@ -5,9 +5,10 @@ from valt.unpacker import extract_all, verify_compartment
 from cryptography.exceptions import InvalidTag
 
 
-def ask_password(confirm=False):
+def ask_password(confirm=False, for_name=None):
+    who = f" (for '{for_name}')" if for_name else ""
     while True:
-        pw = getpass.getpass("Password: ")
+        pw = getpass.getpass(f"Password{who}: ")
 
         if len(pw) < 8:
             print("Password must be atleast 8 characters")
@@ -15,7 +16,7 @@ def ask_password(confirm=False):
         if not confirm:
             return pw
         
-        pw2 = getpass.getpass("Confirm password: ")
+        pw2 = getpass.getpass(f"Confirm password{who}: ")
 
         if pw2 != pw:
             print("Passwords dont match, try again")
@@ -94,34 +95,29 @@ class Progress:
 
 
 def do_create(args):
-    print("Pick a strong password.")
-    print("Forgotten passwords can never be recovered.\n")
+    print("Pick strong, unique passwords. Forgotten passwords can never be recovered.\n")
+
+    if args.label and len(args.folders) > 1:
+        print("--label works with exactly one --folder.")
+        sys.exit(1)
 
     compartments = []
-    while True:
-        ans = input("Add a compartment? y/n: ").strip().lower()
-        if ans in ("n", "no"):
-            break
-
-        folder = input("Folder path: ").strip()
+    total = len(args.folders)
+    for i, folder in enumerate(args.folders, start=1):
         if not os.path.isdir(folder):
-            print("Not a valid folder, try again")
-            continue
-
-        label = input("Label (Optional, Enter to skip): ").strip()
-        if len(label.encode("utf-8")) > 31:
-            print("Label too long, try again with a shorter one.")
-            continue
-
-        pw = ask_password(confirm=True)
-        compartments.append((folder, pw, label))
+            print(f"Not a valid folder: {folder}")
+            sys.exit(1)
+        shown = os.path.basename(os.path.normpath(folder))
+        print(f"Compartment {i} of {total}: '{shown}'")
+        pw = ask_password(confirm=True, for_name=shown)
+        compartments.append((folder, pw, args.label or ""))
 
     if not compartments:
         print("No compartments added")
         return
 
     progress = Progress("packing")
-    create(args.path, compartments, progress=progress.update)
+    create(args.path, compartments, slots=args.slots, progress=progress.update)
     size_mb = os.path.getsize(args.path) / 1024 ** 2
     print(f"Done! - {args.path}: {len(compartments)} compartment(s), {size_mb:.1f} MB")
 
@@ -272,73 +268,86 @@ def do_add(args):
     slot_count, data_offset = read_header(args.path)
     print("You cannot see which slots are secretly occupied. If the slot you")
     print("pick holds a compartment whose password you have forgotten, writing")
-    print("here will destroy it.")
+    print("here will destroy it.\n")
 
-    pw_existing = getpass.getpass("Your existing password (Enter to skip): ")
-    if pw_existing:
-        views = open_container(args.path, pw_existing)
-        for v in views:
-            print(f" yours: slot {v['slot']} ('{v['name']}')")
+    if not os.path.isdir(args.folder):
+        print(f"Not a valid folder: {args.folder}")
+        sys.exit(1)
 
-    folder = input("Folder path: ").strip()
-    if not os.path.isdir(folder):
-        print("Not a valid folder, try again")
-        sys.exit(1)
-    label = input("Label (Optional, Enter to skip): ").strip()
-    if len(label.encode("utf-8")) > 31:
-        print("Label too long, try again with a shorter one.")
-        sys.exit(1)
-    pw = ask_password(confirm=True)
+    shown = os.path.basename(os.path.normpath(args.folder))
+    pw = ask_password(confirm=True, for_name=shown)
+
     progress = Progress("packing")
-
-    slot = input(f"Slot number to use (0 - {slot_count - 1}): ").strip()
-    try:
-        slot = int(slot)
-    except ValueError:
-        print("Invalid choice.")
-        sys.exit(1)
-    if not 0 <= slot < slot_count:
-        print("Invalid choice.")
-        sys.exit(1)
-
-    name = add(args.path, folder, pw, label, slot, progress=progress.update)
-    print(f"✔ Added '{name}' in slot {slot}.")
+    name = add(args.path, args.folder, pw, args.label, args.slot, progress=progress.update)
+    print(f"✔ Added '{name}' in slot {args.slot}.")
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="valt")
-    sub = parser.add_subparsers(dest="cmd")
-    sub.required = True
+    parser = argparse.ArgumentParser(
+        prog="valt",
+        description="Valt - one file, many folders, each behind its own password.",
+        epilog=(
+            "examples:\n"
+            "  valt create my.valt --folder C:\\Users\\me\\taxes --folder E:\\Movies --slots 4\n"
+            "  valt open my.valt\n"
+            "  valt extract my.valt OUT --compartment taxes\n"
+            "  valt add my.valt --folder D:\\music --label Songs --slot 2\n"
+            "\n"
+            "passwords are always asked for interactively - they are never typed\n"
+            "into the command line, so they never land in shell history.\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True, title="commands",
+                                help="run 'valt COMMAND --help' for details on one")
 
-    p = sub.add_parser("create")
-    p.add_argument("path")
+    p = sub.add_parser("create", help="build a new vault from one or more folders",
+                       description="builds a new .valt vault and locks each --folder into "
+                                   "its own compartment, behind its own password (asked "
+                                   "interactively - never read from the command line). "
+                                   "the vault is packed: exactly its contents plus a "
+                                   "small random overhead.")
+    p.add_argument("path", help="vault file to create, e.g. my.valt")
+    p.add_argument("--folder", action="append", default=[], dest="folders", metavar="DIR",
+                   help="folder to lock into its own compartment (repeat for more)")
+    p.add_argument("--label", default="", metavar="NAME",
+                   help="compartment label; default: the folder's name (max 31 bytes)")
+    p.add_argument("--slots", type=int, default=None, metavar="N",
+                   help="total safes in the vault, 2-16; default: compartments + 2 spares")
     p.set_defaults(func=do_create)
 
-    p = sub.add_parser("open")
-    p.add_argument("path")
+    p = sub.add_parser("open", help="unlock and list what a password opens")
+    p.add_argument("path", help="vault file to open")
     p.set_defaults(func=do_open)
 
-    p = sub.add_parser("extract")
-    p.add_argument("path")
-    p.add_argument("dest")
-    p.add_argument("--compartment")
-    p.add_argument("--force", action="store_true")
+    p = sub.add_parser("extract", help="stream a compartment's files back out")
+    p.add_argument("path", help="vault file")
+    p.add_argument("dest", help="destination folder (created if missing)")
+    p.add_argument("--compartment", metavar="NAME",
+                   help="which compartment to extract; only asked when several are open")
+    p.add_argument("--force", action="store_true",
+                   help="overwrite existing files in the destination")
     p.set_defaults(func=do_extract)
 
-    p = sub.add_parser("change-pw")
-    p.add_argument("path")
+    p = sub.add_parser("change-pw", help="re-lock a compartment with a new password (instant)")
+    p.add_argument("path", help="vault file")
     p.set_defaults(func=do_change_pw)
 
-    p = sub.add_parser("remove")
-    p.add_argument("path")
+    p = sub.add_parser("remove", help="wipe a compartment's safe from the vault")
+    p.add_argument("path", help="vault file")
     p.set_defaults(func=do_remove)
 
-    p = sub.add_parser("verify")
-    p.add_argument("path")
+    p = sub.add_parser("verify", help="re-decrypt everything an unlocked password owns")
+    p.add_argument("path", help="vault file")
     p.set_defaults(func=do_verify)
 
-    p = sub.add_parser("add")
-    p.add_argument("path")
+    p = sub.add_parser("add", help="append a new compartment to an existing vault")
+    p.add_argument("path", help="vault file")
+    p.add_argument("--folder", required=True, help="folder to lock into the new compartment")
+    p.add_argument("--label", default="", metavar="NAME",
+                   help="compartment label; default: the folder's name (max 31 bytes)")
+    p.add_argument("--slot", type=int, required=True, metavar="N",
+                   help="which safe to lock this compartment into (read the warning first)")
     p.set_defaults(func=do_add)
 
     args = parser.parse_args(argv)

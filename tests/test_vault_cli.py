@@ -1,7 +1,6 @@
-"""Stage 8 — checks for valt/cli.py.
+"""Stage 8.5 — checks for the flag-driven CLI.
 
-The CLI: three commands, uniform errors, no oracles, no passwords in argv.
-Prompts are faked, so no typing -- and no real passwords in tests.
+Flags carry everything non-secret; passwords arrive via a faked getpass.
 Run from the repo root:   .venv\\Scripts\\python -m pytest -v
 """
 import os
@@ -9,174 +8,169 @@ import os
 import pytest
 
 from valt import cli
-from valt.vault import create
-
-
-class FakeIO:
-    """Queued answers for input() and getpass.getpass(), in order."""
-
-    def __init__(self, lines=(), passwords=()):
-        self.lines = list(lines)
-        self.passwords = list(passwords)
-
-    def input(self, prompt=""):
-        assert self.lines, f"unexpected input() call: {prompt}"
-        return self.lines.pop(0)
-
-    def getpass(self, prompt=""):
-        assert self.passwords, f"unexpected getpass() call: {prompt}"
-        return self.passwords.pop(0)
-
-
-@pytest.fixture
-def io(monkeypatch):
-    fake = FakeIO()
-    monkeypatch.setattr(cli.getpass, "getpass", fake.getpass)
-    monkeypatch.setattr(cli, "input", fake.input, raising=False)
-    return fake
+from valt.container import read_header
+from valt.vault import create, open_container
 
 
 def make_folder(tmp_path, name="docs"):
     f = tmp_path / name
-    f.mkdir()
+    f.mkdir(parents=True, exist_ok=True)
     (f / "a.txt").write_bytes(b"hello " * 20)
     (f / "b.txt").write_bytes(b"world" * 10)
     return f
 
 
+@pytest.fixture
+def passwords(monkeypatch):
+    queue = []
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": queue.pop(0))
+    return queue
+
+
 # ---------- the happy paths ----------
 
-def test_create_then_open_round_trip(tmp_path, io, capsys):
+def test_create_then_open_round_trip(tmp_path, passwords, capsys):
     folder = make_folder(tmp_path)
-    io.lines += ["y", str(folder), "docs", "n"]
-    io.passwords += ["longenough", "longenough"]
-    cli.main(["create", str(tmp_path / "v.valt")])
+    passwords += ["longenough", "longenough"]
+    cli.main(["create", str(tmp_path / "v.valt"), "--folder", str(folder),
+              "--label", "docs"])
 
-    io.passwords += ["longenough"]
-    cli.main(["open", str(tmp_path / "v.valt")])           # exit 0: no SystemExit
+    passwords += ["longenough"]
+    cli.main(["open", str(tmp_path / "v.valt")])
     out = capsys.readouterr().out
-    assert "docs" in out
-    assert "a.txt" in out
+    assert "docs" in out and "a.txt" in out
 
 
-def test_extract_round_trip(tmp_path, io):
+def test_auto_label_from_folder_basename(tmp_path, passwords):
+    folder = make_folder(tmp_path, "tax documents")
+    passwords += ["longenough", "longenough"]
+    p = tmp_path / "v.valt"
+    cli.main(["create", str(p), "--folder", str(folder)])
+    seen = open_container(p, "longenough")
+    assert [c["name"] for c in seen] == ["tax documents"]
+
+
+def test_extract_round_trip(tmp_path, passwords):
     folder = make_folder(tmp_path)
     container = tmp_path / "v.valt"
-    io.lines += ["y", str(folder), "docs", "n"]
-    io.passwords += ["longenough", "longenough"]
-    cli.main(["create", str(container)])
-
+    passwords += ["longenough", "longenough"]
+    cli.main(["create", str(container), "--folder", str(folder), "--label", "docs"])
     dest = tmp_path / "out"
-    io.passwords += ["longenough"]
+    passwords += ["longenough"]
     cli.main(["extract", str(container), str(dest)])
-
     for name in ("a.txt", "b.txt"):
         assert (dest / name).read_bytes() == (folder / name).read_bytes()
 
 
-def test_short_password_is_refused_then_reasked(tmp_path, io, capsys):
+def test_short_password_is_refused_then_reasked(tmp_path, passwords, capsys):
     folder = make_folder(tmp_path)
-    io.lines += ["y", str(folder), "", "n"]
-    io.passwords += ["short", "longenough", "longenough"]   # refused, then accepted
-    cli.main(["create", str(tmp_path / "v.valt")])
+    passwords += ["short", "longenough", "longenough"]
+    cli.main(["create", str(tmp_path / "v.valt"), "--folder", str(folder)])
     assert "8 characters" in capsys.readouterr().out
 
 
-def test_extract_refuses_overwrite_without_force(tmp_path, io, capsys):
+def test_password_prompt_shows_the_compartment(tmp_path, passwords, capsys, monkeypatch):
+    # the compartment name travels into the prompt via ask_password's context
+    folder = make_folder(tmp_path)
+    seen = []
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": seen.append(prompt) or "longenough")
+    cli.main(["create", str(tmp_path / "v.valt"), "--folder", str(folder), "--label", "docs"])
+    assert any("(for 'docs')" in p for p in seen)
+
+
+# ---------- the guardrails ----------
+
+def test_extract_refuses_overwrite_without_force(tmp_path, passwords, capsys):
     folder = make_folder(tmp_path)
     container = tmp_path / "v.valt"
-    io.lines += ["y", str(folder), "docs", "n"]
-    io.passwords += ["longenough", "longenough"]
-    cli.main(["create", str(container)])
-
+    passwords += ["longenough", "longenough"]
+    cli.main(["create", str(container), "--folder", str(folder), "--label", "docs"])
     dest = tmp_path / "out"
-    io.passwords += ["longenough"]
-    cli.main(["extract", str(container), str(dest)])        # first extract is fine
+    passwords += ["longenough"]
+    cli.main(["extract", str(container), str(dest)])
 
-    io.passwords += ["longenough"]
+    passwords += ["longenough"]
     with pytest.raises(SystemExit) as e:
-        cli.main(["extract", str(container), str(dest)])    # second one clashes
+        cli.main(["extract", str(container), str(dest)])
     assert e.value.code == 1
     assert "already exist" in capsys.readouterr().out
 
-    io.passwords += ["longenough"]
-    cli.main(["extract", str(container), str(dest), "--force"])  # override works
+    passwords += ["longenough"]
+    cli.main(["extract", str(container), str(dest), "--force"])
 
 
-# ---------- the promises ----------
-
-def test_open_with_never_used_password_is_neutral(tmp_path, io, capsys):
+def test_open_with_never_used_password_is_neutral(tmp_path, passwords, capsys):
     folder = make_folder(tmp_path)
     container = tmp_path / "v.valt"
-    io.lines += ["y", str(folder), "docs", "n"]
-    io.passwords += ["longenough", "longenough"]
-    cli.main(["create", str(container)])
+    passwords += ["longenough", "longenough"]
+    cli.main(["create", str(container), "--folder", str(folder), "--label", "docs"])
 
-    io.passwords += ["not-the-password"]       # >= 8 chars, but wrong
+    passwords += ["not-the-password"]
     with pytest.raises(SystemExit) as e:
         cli.main(["open", str(container)])
     assert e.value.code == 1
     assert "No compartments found for this password." in capsys.readouterr().out
 
 
-def test_truncated_vault_gets_the_uniform_error(tmp_path, io, capsys):
+def test_truncated_vault_gets_the_uniform_error(tmp_path, passwords, capsys):
     folder = make_folder(tmp_path)
     container = tmp_path / "v.valt"
-    io.lines += ["y", str(folder), "docs", "n"]
-    io.passwords += ["longenough", "longenough"]
-    cli.main(["create", str(container)])
-
+    passwords += ["longenough", "longenough"]
+    cli.main(["create", str(container), "--folder", str(folder), "--label", "docs"])
     data = open(container, "rb").read()
-    open(container, "wb").write(data[:300])      # chop into the safes area
-    io.passwords += ["longenough"]
+    open(container, "wb").write(data[:300])
+
+    passwords += ["longenough"]
     with pytest.raises(SystemExit) as e:
         cli.main(["open", str(container)])
     assert e.value.code == 1
     assert "Invalid or corrupted container." in capsys.readouterr().out
 
 
-# ---------- these three document known findings (see report) ----------
-
-def test_value_error_prints_the_real_message(tmp_path, io, capsys):
-    # bug #1: the error net prints the ValueError CLASS, not its message
+def test_value_error_prints_the_real_message(tmp_path, passwords, capsys):
     folders = []
     for i in range(17):
-        f = tmp_path / f"f{i}"
-        f.mkdir()
-        (f / "x.txt").write_bytes(b"x")
-        folders.append(str(f))
+        folders.append(str(make_folder(tmp_path, f"f{i}")))
+    passwords += ["longenough", "longenough"] * 17
+    argv = ["create", str(tmp_path / "v.valt")]
     for f in folders:
-        io.lines += ["y", f, ""]
-        io.passwords += ["longenough", "longenough"]
-    io.lines += ["n"]
-
+        argv += ["--folder", f]
     with pytest.raises(SystemExit) as e:
-        cli.main(["create", str(tmp_path / "v.valt")])
+        cli.main(argv)
     assert e.value.code == 1
     assert "at most 16" in capsys.readouterr().out
 
 
-def test_extract_compartment_picker_rejects_bad_choice(tmp_path, io, capsys):
-    # bug #2: choice "-1" wraps around with Python negative indexing
-    photos = make_folder(tmp_path, "photos")
-    taxes = tmp_path / "taxes"; taxes.mkdir()
-    (taxes / "IRS.txt").write_bytes(b"numbers")
-    container = tmp_path / "v.valt"
-    io.lines += ["y", str(photos), "photos", "y", str(taxes), "taxes", "n"]
-    io.passwords += ["longenough", "longenough", "longenough", "longenough"]
-    cli.main(["create", str(container)])
+def test_label_with_multiple_folders_errors(tmp_path, passwords, capsys):
+    f1 = make_folder(tmp_path, "photos")
+    f2 = make_folder(tmp_path, "taxes")
+    with pytest.raises(SystemExit) as e:
+        cli.main(["create", str(tmp_path / "v.valt"), "--folder", str(f1),
+                  "--folder", str(f2), "--label", "x"])
+    assert e.value.code == 1
+    assert "exactly one" in capsys.readouterr().out
 
+
+def test_slots_override_lands_in_the_header(tmp_path, passwords):
+    p = tmp_path / "v.valt"
+    folder = make_folder(tmp_path)
+    passwords += ["longenough", "longenough"]
+    cli.main(["create", str(p), "--slots", "4", "--folder", str(folder)])
+    assert read_header(p)[0] == 4
+
+
+def test_extract_compartment_picker_rejects_bad_choice(tmp_path, passwords, capsys,
+                                                       monkeypatch):
+    f1 = make_folder(tmp_path, "photos")
+    f2 = make_folder(tmp_path, "taxes")
+    container = tmp_path / "v.valt"
+    passwords += ["longenough", "longenough", "longenough", "longenough"]
+    cli.main(["create", str(container), "--folder", str(f1), "--folder", str(f2)])
     dest = tmp_path / "out"
-    io.passwords += ["longenough"]
-    io.lines += ["-1"]
+
+    passwords += ["longenough"]
+    monkeypatch.setattr(cli, "input", lambda prompt="": "-1", raising=False)
     with pytest.raises(SystemExit) as e:
         cli.main(["extract", str(container), str(dest)])
     assert e.value.code == 1
     assert "Invalid choice." in capsys.readouterr().out
-
-
-def test_no_means_no(tmp_path, io, capsys):
-    # bug #3: only exact "n" ended the loop -- "no" was taken as "yes"
-    io.lines += ["no"]
-    cli.main(["create", str(tmp_path / "v.valt")])
-    assert "No compartments added" in capsys.readouterr().out

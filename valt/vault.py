@@ -10,13 +10,18 @@ def _header_bytes(slot_count):
     return b"VALT" + u16(1) + u16(slot_count)
 
 
-def create(path, compartments, progress=None):
-    """compartments = [(folder, password, name), ...]. Size and slot count
-    are derived: slots = compartments + 2 spares, size = exactly what the
-    folders need plus a small random overhead (0 - 8 KiB)."""
+def create(path, compartments, slots=None, progress=None):
+    """compartments = [(folder, password, name), ...]. Slot count defaults to
+    compartments + 2 spares; size = exactly what the folders need plus a
+    small random overhead (0 - 8 KiB)."""
     if len(compartments) > 16:
         raise ValueError("a vault holds at most 16 compartments")
-    slots = max(2, min(16, len(compartments) + 2))
+    if slots is None:
+        slots = max(2, min(16, len(compartments) + 2))
+    if not 2 <= slots <= 16:
+        raise ValueError(f"slot_count must be 2 - 16, received {slots}")
+    if len(compartments) > slots:
+        raise ValueError("more compartments than slots")
 
     try:
         write_skeleton(path, slots)
