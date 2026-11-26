@@ -55,9 +55,13 @@ def build_index(planned, folder_key):
     return blob, len(blob)
 
 
-def pack_folder(container_path, folder, folder_key):
+def pack_folder(container_path, folder, folder_key, progress=None, label=None):
     """Append one compartment at end-of-file. No fits-check: the folder
-    defines its own segment. Returns (segment_offset, segment_len, index_len)."""
+    defines its own segment. Returns (segment_offset, segment_len, index_len).
+
+    progress(done, total) fires as ciphertext is written, if provided."""
+    if label is None:
+        label = os.path.basename(os.path.normpath(folder))
     entries = collect_files(folder)
     planned, total_ct = plan_starts(entries)
     index_blob, index_len = build_index(planned, folder_key)
@@ -67,7 +71,14 @@ def pack_folder(container_path, folder, folder_key):
         f.seek(0, os.SEEK_END)
         segment_offset = f.tell()
 
+        done = 0
+        if progress:
+            progress(done, segment_len, label)
+
         f.write(index_blob)
+        done += index_len
+        if progress:
+            progress(done, segment_len)
 
         for file_number, entry in enumerate(planned):
             if entry["size"] == 0:
@@ -81,7 +92,11 @@ def pack_folder(container_path, folder, folder_key):
                     if not chunk:
                         break
                     nonce = u32(file_number) + u64(chunk_number)
-                    f.write(lock(folder_key, nonce, chunk))
+                    ct = lock(folder_key, nonce, chunk)
+                    f.write(ct)
+                    done += len(ct)
+                    if progress:
+                        progress(done, segment_len)
                     chunk_number += 1
 
     return segment_offset, segment_len, index_len

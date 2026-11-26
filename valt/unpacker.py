@@ -52,7 +52,7 @@ def read_index(container_path, segment_offset, segment_len, folder_key, index_le
 
 
 def extract_file(container_path, segment_offset, segment_len, folder_key, index_len,
-                 file_number, entry, dest_dir):
+                 file_number, entry, dest_dir, progress=None):
     data_base = segment_offset + index_len
 
     name = entry["name"]
@@ -68,6 +68,10 @@ def extract_file(container_path, segment_offset, segment_len, folder_key, index_
 
     chunk_count = math.ceil(size / CHUNK) if size > 0 else 0
     stride = CHUNK + 16
+    file_total = size + 16 * chunk_count
+    done = 0
+    if progress:
+        progress(0, file_total)
 
     try:
         with open(dest_path, "wb") as out, open(container_path, "rb") as f:
@@ -83,6 +87,9 @@ def extract_file(container_path, segment_offset, segment_len, folder_key, index_
 
                 nonce = u32(file_number) + u64(c)
                 out.write(unlock(folder_key, nonce, ct))
+                done += read_len
+                if progress:
+                    progress(done, file_total)
 
         if os.path.getsize(dest_path) != size:
             raise FormatError("Invalid or corrupted container")
@@ -93,18 +100,46 @@ def extract_file(container_path, segment_offset, segment_len, folder_key, index_
         raise
 
 
-def extract_all(container_path, segment_offset, segment_len, folder_key, index_len, dest_dir):
+def extract_all(container_path, segment_offset, segment_len, folder_key, index_len, dest_dir,
+                progress=None, label=None):
     entries = read_index(container_path, segment_offset, segment_len, folder_key, index_len)
+
+    spans = []
+    for e in entries:
+        chunks = math.ceil(e["size"] / CHUNK) if e["size"] else 0
+        spans.append(e["size"] + 16 * chunks)
+    total = sum(spans)
+
+    done = 0
     for file_number, entry in enumerate(entries):
+        shifted = None
+        if progress:
+            def shifted(file_done, file_total, _base=done, _total=total, _label=label):
+                if file_done == 0:
+                    progress(_base, _total, _label)
+                else:
+                    progress(_base + file_done, _total)
+
         extract_file(container_path, segment_offset, segment_len, folder_key, index_len,
-                     file_number, entry, dest_dir)
+                     file_number, entry, dest_dir, progress=shifted)
+        done += spans[file_number]
 
 
-def verify_compartment(container_path, segment_offset, segment_len, folder_key, index_len):
+def verify_compartment(container_path, segment_offset, segment_len, folder_key, index_len,
+                       progress=None, label=None):
     """Re-decrypt every chunk and discard the plaintext.
     Returns (True, None) or (False, first corrupted file name)."""
     entries = read_index(container_path, segment_offset, segment_len, folder_key, index_len)
     data_base = segment_offset + index_len
+
+    spans = []
+    for e in entries:
+        chunks = math.ceil(e["size"] / CHUNK) if e["size"] else 0
+        spans.append(e["size"] + 16 * chunks)
+    total = sum(spans)
+    done = 0
+    if progress:
+        progress(0, total, label)
 
     with open(container_path, "rb") as f:
         for file_number, e in enumerate(entries):
@@ -121,5 +156,9 @@ def verify_compartment(container_path, segment_offset, segment_len, folder_key, 
                     unlock(folder_key, u32(file_number) + u64(c), ct)
                 except InvalidTag:
                     return False, e["name"]
+
+                done += plain_len + 16
+                if progress:
+                    progress(done, total)
 
     return True, None

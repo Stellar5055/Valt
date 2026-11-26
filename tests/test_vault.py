@@ -157,3 +157,13 @@ def test_too_many_compartments_is_rejected(tmp_path):
     many = [(str(photos), f"pw{i}", f"c{i}") for i in range(17)]
     with pytest.raises(ValueError):
         create(tmp_path / "v.valt", many)
+
+
+def test_create_auto_labels_from_the_folder_name(tmp_path):
+    folder = tmp_path / "my documents"
+    folder.mkdir()
+    (folder / "f.txt").write_bytes(b"x")
+    p = tmp_path / "v.valt"
+    create(p, [(str(folder), "pwA", "")])
+    seen = open_container(p, "pwA")
+    assert [c["name"] for c in seen] == ["my documents"]

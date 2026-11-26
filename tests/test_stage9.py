@@ -154,3 +154,25 @@ def test_add_slot_out_of_range_raises(tmp_path):
     folder = make_folder(tmp_path, "docs")
     with pytest.raises(ValueError):
         add(p, str(folder), "pw", "docs", slot=5)
+
+
+def test_add_auto_labels_from_the_folder_name(tmp_path):
+    p = tmp_path / "v.valt"
+    write_skeleton(p, 2)
+    folder = tmp_path / "tax documents 2026"
+    folder.mkdir()
+    (folder / "x.txt").write_bytes(b"x")
+
+    name = add(p, str(folder), "pw", "", slot=0)     # empty label -> auto
+    assert name == "tax documents 2026"
+    seen = open_container(p, "pw")
+    assert [c["name"] for c in seen] == ["tax documents 2026"]
+
+
+def test_add_trims_overlong_auto_labels(tmp_path):
+    p = tmp_path / "v.valt"
+    write_skeleton(p, 2)
+    folder = tmp_path / ("a" * 40)
+    folder.mkdir()
+    name = add(p, str(folder), "pw", "", slot=0)
+    assert name == "a" * 31

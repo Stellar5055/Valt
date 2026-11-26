@@ -8,7 +8,7 @@ import pytest
 from cryptography.exceptions import InvalidTag
 
 from valt.crypto import new_key, random_bytes, u16
-from valt.safes import safe_aad, build_payload, parse_payload, wrap_safe, try_open_safe
+from valt.safes import safe_aad, build_payload, parse_payload, wrap_safe, try_open_safe, resolve_label
 
 FAKE_HEADER = b"VALT" + u16(1) + u16(8)
 
@@ -120,3 +120,21 @@ def test_empty_name_is_allowed():
     opened = open_at_slot(wrap_at_slot(make_payload(""), "correct horse", 0),
                           "correct horse", 0)
     assert opened[4] == ""
+
+
+# ---------- label resolution ----------
+
+def test_resolve_label_defaults_to_the_folder_name():
+    assert resolve_label("C:/Users/me/taxes", "") == "taxes"
+
+
+def test_resolve_label_keeps_a_given_name():
+    assert resolve_label("somewhere", "mine") == "mine"
+
+
+def test_resolve_label_trims_to_31_bytes_and_stays_valid_utf8():
+    long = "🔐" * 20                                 # 80 bytes in UTF-8
+    out = resolve_label("somewhere", long)
+    assert len(out.encode("utf-8")) <= 31
+    out.encode("utf-8")                              # still decodable text
+    assert out.startswith("🔐")                      # cut on a character boundary

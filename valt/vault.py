@@ -1,7 +1,7 @@
 import os, secrets
 from valt.crypto import new_key, random_bytes, u16
 from valt.container import write_skeleton, read_header
-from valt.safes import build_payload, wrap_safe, try_open_safe, safe_aad
+from valt.safes import build_payload, wrap_safe, try_open_safe, safe_aad, resolve_label, resolve_label
 from valt.packer import pack_folder
 from valt.unpacker import read_index
 
@@ -10,7 +10,7 @@ def _header_bytes(slot_count):
     return b"VALT" + u16(1) + u16(slot_count)
 
 
-def create(path, compartments):
+def create(path, compartments, progress=None):
     """compartments = [(folder, password, name), ...]. Size and slot count
     are derived: slots = compartments + 2 spares, size = exactly what the
     folders need plus a small random overhead (0 - 8 KiB)."""
@@ -23,8 +23,10 @@ def create(path, compartments):
         header_bytes = _header_bytes(slots)
 
         for slot, (folder, password, name) in enumerate(compartments):
+            name = resolve_label(folder, name)
             folder_key = new_key()
-            segment_offset, segment_len, index_len = pack_folder(path, folder, folder_key)
+            segment_offset, segment_len, index_len = pack_folder(path, folder, folder_key,
+                                                                 progress=progress, label=name)
 
             payload = build_payload(folder_key, segment_offset, segment_len, index_len, name)
             safe = wrap_safe(password, payload, safe_aad(header_bytes, slot))
@@ -43,7 +45,7 @@ def create(path, compartments):
         raise
 
 
-def open_container(path, password):
+def open_container(path, password, progress=None):
     slot_count, data_offset = read_header(path)
     header_bytes = _header_bytes(slot_count)
     results = []
@@ -54,6 +56,9 @@ def open_container(path, password):
             safe = f.read(128)
 
             opened = try_open_safe(password, safe, safe_aad(header_bytes, slot))
+            if progress:
+                progress(slot + 1, slot_count)
+
             if opened is None:
                 continue
 
@@ -118,7 +123,7 @@ def remove(path, password, slot):
     return name
 
 
-def add(path, folder, password, name, slot):
+def add(path, folder, password, name, slot, progress=None):
     """Append a new compartment at end-of-file and lock it into `slot`.
     The CLI must warn: if that slot secretly holds a compartment whose
     password is forgotten, writing here destroys it."""
@@ -127,7 +132,9 @@ def add(path, folder, password, name, slot):
         raise ValueError(f"slot {slot} is out of range 0..{slot_count - 1}")
 
     folder_key = new_key()
-    segment_offset, segment_len, index_len = pack_folder(path, folder, folder_key)
+    name = resolve_label(folder, name)
+    segment_offset, segment_len, index_len = pack_folder(path, folder, folder_key,
+                                                         progress=progress, label=name)
     payload = build_payload(folder_key, segment_offset, segment_len, index_len, name)
     safe = wrap_safe(password, payload, safe_aad(_header_bytes(slot_count), slot))
 

@@ -1,4 +1,4 @@
-import struct
+import os, struct
 from valt.crypto import random_bytes, password_to_key, unlock, lock, u64, u32, read_u64, read_u32
 from cryptography.exceptions import InvalidTag
 
@@ -38,6 +38,18 @@ def parse_payload(payload):
         raise ValueError("payload length mismatch")
 
     return folder_key, segment_offset, segment_len, index_len, name.decode("utf-8")
+
+
+def resolve_label(folder, name):
+    """Empty label -> the folder's basename. Too long -> trimmed to fit the
+    31-byte budget on a character boundary (never mid-emoji)."""
+    if not name:
+        name = os.path.basename(os.path.normpath(folder))
+    raw = name.encode("utf-8")
+    if len(raw) > 31:
+        raw = raw[:31]
+        name = raw.decode("utf-8", errors="ignore")
+    return name
 
 
 def wrap_safe(password, payload, aad):

@@ -1,4 +1,4 @@
-import argparse, sys, os, getpass
+import argparse, sys, os, getpass, time
 from valt.container import FormatError, read_header
 from valt.vault import create, open_container, change_password, remove, add
 from valt.unpacker import extract_all, verify_compartment
@@ -32,6 +32,67 @@ def human(n):
     return f"{n / 1024 ** 2:.1f} MB"
 
 
+def _tty():
+    return sys.stdout.isatty()
+
+
+def fmt_eta(seconds):
+    seconds = int(seconds)
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{sec:02d}"
+    return f"{minutes:02d}:{sec:02d}"
+
+
+class Progress:
+    """Percentage + ETA on a single re-used line. No bar, per the plan.
+
+    Pass Progress.update into vault/packer/unpacker as their progress
+    callback; the class throttles itself and only draws on a real terminal.
+    The compartment name arrives with the first update of each phase and
+    is shown next to the percentage."""
+
+    def __init__(self, verb):
+        self.verb = verb
+        self.name = None
+        self.start = None
+        self.last_draw = 0.0
+        self.drawing = False
+
+    def update(self, done, total, name=None):
+        if not _tty():
+            return
+        if name is not None:
+            self.name = name
+        now = time.monotonic()
+
+        if done == 0:                        # a new phase begins
+            if self.drawing:
+                print()                      # close the previous line
+            self.start = now
+
+        if self.start is None:
+            self.start = now
+
+        if 0 < done < total and now - self.last_draw < 0.1:
+            return                           # throttle mid-phase updates
+        self.last_draw = now
+
+        pct = 100 * done / total if total else 100
+        who = f" '{self.name}'" if self.name else ""
+        line = f"\r{self.verb}{who} {pct:.0f}%"
+        if 0 < done < total:
+            eta = (now - self.start) * (total / done - 1)
+            line += f" · ETA {fmt_eta(eta)}"
+        print(line + "   ", end="", flush=True)
+        self.drawing = True
+
+        if done >= total:
+            print()                          # end the line at 100%
+            self.drawing = False
+
+
 def do_create(args):
     print("Pick a strong password.")
     print("Forgotten passwords can never be recovered.\n")
@@ -59,14 +120,16 @@ def do_create(args):
         print("No compartments added")
         return
 
-    create(args.path, compartments)
+    progress = Progress("packing")
+    create(args.path, compartments, progress=progress.update)
     size_mb = os.path.getsize(args.path) / 1024 ** 2
     print(f"Done! - {args.path}: {len(compartments)} compartment(s), {size_mb:.1f} MB")
 
 
 def do_open(args):
     pw = ask_password()
-    views = open_container(args.path, pw)
+    progress = Progress("unlocking")
+    views = open_container(args.path, pw, progress=progress.update)
     
     if not views:
         print("No compartments found for this password.")
@@ -79,7 +142,8 @@ def do_open(args):
 
 def do_extract(args):
     pw = ask_password()
-    views = open_container(args.path, pw)
+    progress = Progress("extracting")
+    views = open_container(args.path, pw, progress=progress.update)
 
     if not views:
         print("No compartments found for this password.")
@@ -126,6 +190,8 @@ def do_extract(args):
         comp["folder_key"],
         comp["index_len"],
         args.dest,
+        progress=progress.update,
+        label=comp["name"],
     )
 
     for entry in comp["entries"]:
@@ -183,14 +249,16 @@ def do_remove(args):
 
 def do_verify(args):
     pw = ask_password()
-    views = open_container(args.path, pw)
+    progress = Progress("verifying")
+    views = open_container(args.path, pw, progress=progress.update)
     if not views:
         print("No compartments found for this password.")
         sys.exit(1)
     failed = False
     for v in views:
         ok, bad = verify_compartment(args.path, v["segment_offset"],
-                                     v["segment_len"], v["folder_key"], v["index_len"])
+                                     v["segment_len"], v["folder_key"], v["index_len"],
+                                     progress=progress.update, label=v["name"])
         if ok:
             print(f"✔ '{v['name']}': {len(v['entries'])} files verified")
         else:
@@ -221,6 +289,7 @@ def do_add(args):
         print("Label too long, try again with a shorter one.")
         sys.exit(1)
     pw = ask_password(confirm=True)
+    progress = Progress("packing")
 
     slot = input(f"Slot number to use (0 - {slot_count - 1}): ").strip()
     try:
@@ -232,7 +301,7 @@ def do_add(args):
         print("Invalid choice.")
         sys.exit(1)
 
-    name = add(args.path, folder, pw, label, slot)
+    name = add(args.path, folder, pw, label, slot, progress=progress.update)
     print(f"✔ Added '{name}' in slot {slot}.")
 
 
