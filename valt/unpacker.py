@@ -1,4 +1,5 @@
 import os, json, math
+from cryptography.exceptions import InvalidTag
 from valt.crypto import unlock, u32, u64
 from valt.container import FormatError
 
@@ -97,3 +98,28 @@ def extract_all(container_path, segment_offset, segment_len, folder_key, index_l
     for file_number, entry in enumerate(entries):
         extract_file(container_path, segment_offset, segment_len, folder_key, index_len,
                      file_number, entry, dest_dir)
+
+
+def verify_compartment(container_path, segment_offset, segment_len, folder_key, index_len):
+    """Re-decrypt every chunk and discard the plaintext.
+    Returns (True, None) or (False, first corrupted file name)."""
+    entries = read_index(container_path, segment_offset, segment_len, folder_key, index_len)
+    data_base = segment_offset + index_len
+
+    with open(container_path, "rb") as f:
+        for file_number, e in enumerate(entries):
+            chunks = math.ceil(e["size"] / CHUNK) if e["size"] else 0
+            for c in range(chunks):
+                plain_len = min(CHUNK, e["size"] - c * CHUNK)
+                f.seek(data_base + e["start"] + c * (CHUNK + 16))
+                ct = f.read(plain_len + 16)
+
+                if len(ct) != plain_len + 16:
+                    return False, e["name"]
+
+                try:
+                    unlock(folder_key, u32(file_number) + u64(c), ct)
+                except InvalidTag:
+                    return False, e["name"]
+
+    return True, None

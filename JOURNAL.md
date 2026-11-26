@@ -18,3 +18,5 @@
 ### Day 4 - 26-11-26
 
 - I finished stage 6 in the morning - this was also hard - harder than stage 5, there were soo much like new stuff that i havent learnt - i used chatgpt help for some parts understanding stuff, but finally did it. it also took many iterations of testing small stuff manually with test folders etc and its done, commited and the agent wrote tests.
+
+- During the afternoon and evening, i finished stage 7 and 8. both were very satisfiyiying, on stage 8 almost 0 errors i came across, 7 had a few, fixed them. after stage 8, i spent liek 20 minutes like testing every single use case possible - (not literally everything but the most common ones). that revealed one error taht i fixed. now everything is perfect till stage 8

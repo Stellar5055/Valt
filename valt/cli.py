@@ -1,7 +1,7 @@
 import argparse, sys, os, getpass
-from valt.container import FormatError
-from valt.vault import create, open_container
-from valt.unpacker import extract_all
+from valt.container import FormatError, read_header
+from valt.vault import create, open_container, change_password, remove, add
+from valt.unpacker import extract_all, verify_compartment
 from cryptography.exceptions import InvalidTag
 
 
@@ -132,6 +132,110 @@ def do_extract(args):
         print(f" {entry['name']}  ({human(entry['size'])})")
 
 
+def pick_compartment(views):
+    if len(views) == 1:
+        return views[0]
+    for i, v in enumerate(views):
+        print(f" {i + 1}. {v['name']}")
+    choice = input("Pick a compartment: ").strip()
+    try:
+        number = int(choice)
+    except ValueError:
+        print("Invalid choice.")
+        sys.exit(1)
+    if not 1 <= number <= len(views):
+        print("Invalid choice.")
+        sys.exit(1)
+    return views[number - 1]
+
+
+def do_change_pw(args):
+    pw = ask_password()
+    views = open_container(args.path, pw)
+    if not views:
+        print("No compartments found for this password.")
+        sys.exit(1)
+    comp = pick_compartment(views)
+    print(f"Changing the password for '{comp['name']}'.")
+    new_pw = ask_password(confirm=True)
+    change_password(args.path, pw, new_pw, slot=comp["slot"])
+    print(f"✔ Password changed for '{comp['name']}'.")
+
+
+def do_remove(args):
+    pw = ask_password()
+    views = open_container(args.path, pw)
+    if not views:
+        print("No compartments found for this password.")
+        sys.exit(1)
+    comp = pick_compartment(views)
+    print("Removed from THIS file. Old copies (backups) still contain it.")
+    ans = input("Remove this compartment? y/n: ").strip().lower()
+    if ans not in ("y", "yes"):
+        print("Aborted.")
+        return
+    name = remove(args.path, pw, comp["slot"])
+    if name is None:
+        print("No compartments found for this password.")
+        sys.exit(1)
+    print(f"✔ Removed '{name}'.")
+
+
+def do_verify(args):
+    pw = ask_password()
+    views = open_container(args.path, pw)
+    if not views:
+        print("No compartments found for this password.")
+        sys.exit(1)
+    failed = False
+    for v in views:
+        ok, bad = verify_compartment(args.path, v["segment_offset"],
+                                     v["segment_len"], v["folder_key"], v["index_len"])
+        if ok:
+            print(f"✔ '{v['name']}': {len(v['entries'])} files verified")
+        else:
+            print(f"✘ '{v['name']}': corrupted at '{bad}'")
+            failed = True
+    if failed:
+        sys.exit(1)
+
+
+def do_add(args):
+    slot_count, data_offset = read_header(args.path)
+    print("You cannot see which slots are secretly occupied. If the slot you")
+    print("pick holds a compartment whose password you have forgotten, writing")
+    print("here will destroy it.")
+
+    pw_existing = getpass.getpass("Your existing password (Enter to skip): ")
+    if pw_existing:
+        views = open_container(args.path, pw_existing)
+        for v in views:
+            print(f" yours: slot {v['slot']} ('{v['name']}')")
+
+    folder = input("Folder path: ").strip()
+    if not os.path.isdir(folder):
+        print("Not a valid folder, try again")
+        sys.exit(1)
+    label = input("Label (Optional, Enter to skip): ").strip()
+    if len(label.encode("utf-8")) > 31:
+        print("Label too long, try again with a shorter one.")
+        sys.exit(1)
+    pw = ask_password(confirm=True)
+
+    slot = input(f"Slot number to use (0 - {slot_count - 1}): ").strip()
+    try:
+        slot = int(slot)
+    except ValueError:
+        print("Invalid choice.")
+        sys.exit(1)
+    if not 0 <= slot < slot_count:
+        print("Invalid choice.")
+        sys.exit(1)
+
+    name = add(args.path, folder, pw, label, slot)
+    print(f"✔ Added '{name}' in slot {slot}.")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="valt")
     sub = parser.add_subparsers(dest="cmd")
@@ -151,6 +255,22 @@ def main(argv=None):
     p.add_argument("--compartment")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=do_extract)
+
+    p = sub.add_parser("change-pw")
+    p.add_argument("path")
+    p.set_defaults(func=do_change_pw)
+
+    p = sub.add_parser("remove")
+    p.add_argument("path")
+    p.set_defaults(func=do_remove)
+
+    p = sub.add_parser("verify")
+    p.add_argument("path")
+    p.set_defaults(func=do_verify)
+
+    p = sub.add_parser("add")
+    p.add_argument("path")
+    p.set_defaults(func=do_add)
 
     args = parser.parse_args(argv)
 
