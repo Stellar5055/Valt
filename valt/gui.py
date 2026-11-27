@@ -774,6 +774,12 @@ def ensure_valt_association():
         except OSError:
             pass                                   # key absent - ours to claim
 
+        # the document icon ships next to the exe (in the zip); fall back to
+        # the exe's own icon when it is not there
+        exe_dir = os.path.dirname(exe)
+        doc_icon = os.path.join(exe_dir, "valt-doc.ico")
+        icon = f'"{doc_icon}"' if os.path.isfile(doc_icon) else f'"{exe}",0'
+
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                               r"Software\Classes\Valt.vault") as k:
             winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "Valt Vault")
@@ -782,7 +788,7 @@ def ensure_valt_association():
             winreg.SetValueEx(k, "", 0, winreg.REG_SZ, command)
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                               r"Software\Classes\Valt.vault\DefaultIcon") as k:
-            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, f'"{exe}",0')
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, icon)
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                               r"Software\Classes\.valt") as k:
             winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "Valt.vault")

@@ -35,7 +35,7 @@ exe_full = EXE(
     strip=False,
     upx=False,          # UPX-packed exes attract antivirus - keep off
     console=False,      # pure GUI app: no terminal window, ever
-    icon=None,
+    icon="assets/valt.ico",
 )
 
 exe_cli = EXE(
@@ -49,5 +49,5 @@ exe_cli = EXE(
     strip=False,
     upx=False,
     console=True,
-    icon=None,
+    icon="assets/valt.ico",
 )

@@ -47,7 +47,7 @@ jobs:
           }
 
       - name: Zip the exes
-        run: Compress-Archive dist\valt.exe, dist\valt-cli.exe -DestinationPath dist\valt.zip -Force
+        run: Compress-Archive dist\valt.exe, dist\valt-cli.exe, dist\valt-doc.ico -DestinationPath dist\valt.zip -Force
 
       - name: Write SHA256SUMS.txt
         run: |

@@ -7,6 +7,7 @@ if exist .venv\Scripts\pyinstaller.exe (
 ) else (
     pyinstaller valt.spec --clean --noconfirm
 )
+copy /y assets\valt-doc.ico dist\ >nul
 if errorlevel 1 (
     echo BUILD FAILED
     exit /b 1
