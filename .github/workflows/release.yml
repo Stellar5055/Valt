@@ -55,12 +55,37 @@ jobs:
             ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) }
           $lines | Set-Content dist\SHA256SUMS.txt -Encoding ascii
 
+      - name: Write release notes
+        run: |
+          @'
+          **Install - PowerShell (one line):**
+
+          ```powershell
+          irm https://raw.githubusercontent.com/Stellar5055/Valt/main/install.ps1 | iex
+          ```
+
+          **Install - Scoop:**
+
+          ```powershell
+          scoop install https://raw.githubusercontent.com/Stellar5055/Valt/main/bucket/valt.json
+          ```
+
+          **Manual:** download `valt.exe` (GUI) or `valt-cli.exe` (command line) below.
+
+          Forgotten passwords can never be recovered.
+          '@ | Set-Content notes.md -Encoding ascii
+
       - name: Replace the exes on the latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload latest dist\valt.exe dist\valt-cli.exe dist\valt.zip dist\SHA256SUMS.txt `
             --repo $env:GITHUB_REPOSITORY --clobber
+
+      - name: Publish the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit latest --repo $env:GITHUB_REPOSITORY --notes-file notes.md
 
       - name: Bump the scoop manifest version and hash
         run: |
@@ -82,3 +107,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add bucket\valt.json
           git diff --staged --quiet || (git commit -m "scoop: bump manifest to $version [skip ci]" && git push)
+
+      - name: Verify the irm installer (standalone path)
+        run: |
+          irm https://raw.githubusercontent.com/Stellar5055/Valt/main/install.ps1 | iex
+          & "$env:LOCALAPPDATA\Valt\valt-cli.exe" --help
