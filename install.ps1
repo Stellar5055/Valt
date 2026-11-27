@@ -11,11 +11,15 @@
 
     Standalone uninstall:  & ([scriptblock]::Create((irm <this url>))) -Uninstall
 #>
-param([switch]$Uninstall)
+param([switch]$Uninstall, [string]$Source)
 
 $ErrorActionPreference = 'Stop'
 $repoBase = 'https://github.com/Stellar5055/Valt/releases/latest/download'
 $manifestUrl = 'https://raw.githubusercontent.com/Stellar5055/Valt/main/bucket/valt.json'
+
+# -Source: where to take valt.zip + SHA256SUMS.txt from. Default is the
+# latest GitHub release; CI passes its freshly built dist\ folder so the
+# verification never races the asset upload.
 
 if ($Uninstall) {
     # removes the standalone install; scoop users: scoop uninstall valt
@@ -39,11 +43,17 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
 }
 
 # ---- standalone install (no scoop needed) ----
-Write-Host 'Downloading Valt...'
+if (-not $Source) { $Source = $repoBase }
+Write-Host "Downloading Valt from $Source..."
 $zip = Join-Path $env:TEMP 'valt.zip'
-Invoke-WebRequest "$repoBase/valt.zip" -OutFile $zip -UseBasicParsing
+if (Test-Path (Join-Path $Source 'valt.zip')) {
+    Copy-Item (Join-Path $Source 'valt.zip') $zip -Force          # local build (CI)
+    $sums = Get-Content (Join-Path $Source 'SHA256SUMS.txt') -Raw
+} else {
+    Invoke-WebRequest (Join-Path $Source 'valt.zip'.Replace('\', '/')) -OutFile $zip -UseBasicParsing
+    $sums = (Invoke-WebRequest (Join-Path $Source 'SHA256SUMS.txt'.Replace('\', '/')) -UseBasicParsing).Content
+}
 
-$sums = (Invoke-WebRequest "$repoBase/SHA256SUMS.txt" -UseBasicParsing).Content
 $line = ($sums -split "`r?`n") | Where-Object { $_ -match 'valt\.zip' }
 if (-not $line -or $line -notmatch '([a-fA-F0-9]{64})') {
     throw 'Could not read the expected hash from SHA256SUMS.txt.'

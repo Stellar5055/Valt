@@ -110,5 +110,5 @@ jobs:
 
       - name: Verify the irm installer (standalone path)
         run: |
-          irm https://raw.githubusercontent.com/Stellar5055/Valt/main/install.ps1 | iex
+          .\install.ps1 -Source dist
           & "$env:LOCALAPPDATA\Valt\valt-cli.exe" --help
