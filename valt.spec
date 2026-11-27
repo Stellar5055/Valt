@@ -1,26 +1,53 @@
 # -*- mode: python ; coding: utf-8 -*-
-# One-file build for Valt. Build with:  build.bat   (or: pyinstaller valt.spec --clean --noconfirm)
+# Two one-file builds from one spec:
+#   dist\valt.exe       GUI + CLI (no arguments opens the GUI)
+#   dist\valt-cli.exe   CLI only (smallest, no Tcl/Tk bundled)
+# Build with:  build.bat   (or: pyinstaller valt.spec --clean --noconfirm)
 
-a = Analysis(
-    ["launcher.py"],
+gui_a = Analysis(
+    ["launcher_gui.py"],
     binaries=[],
     datas=[],
     hiddenimports=[],
-    excludes=["tkinter", "unittest", "pydoc_data"],
+    excludes=["unittest", "pydoc_data"],
     noarchive=False,
 )
-pyz = PYZ(a.pure)
+gui_pyz = PYZ(gui_a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
+cli_a = Analysis(
+    ["launcher_cli.py"],
+    binaries=[],
+    datas=[],
+    hiddenimports=[],
+    excludes=["tkinter", "unittest", "pydoc_data"],   # the CLI exe ships without the GUI runtime
+    noarchive=False,
+)
+cli_pyz = PYZ(cli_a.pure)
+
+exe_full = EXE(
+    gui_pyz,
+    gui_a.scripts,
+    gui_a.binaries,
+    gui_a.datas,
     [],
     name="valt",
     debug=False,
     strip=False,
     upx=False,          # UPX-packed exes attract antivirus - keep off
-    console=True,       # the CLI lives in the console
+    console=True,       # the CLI mode needs the console; the GUI hides it when owned
+    icon=None,
+)
+
+exe_cli = EXE(
+    cli_pyz,
+    cli_a.scripts,
+    cli_a.binaries,
+    cli_a.datas,
+    [],
+    name="valt-cli",
+    debug=False,
+    strip=False,
+    upx=False,
+    console=True,
     icon=None,
 )

@@ -1,5 +1,5 @@
 @echo off
-rem Build the one-file valt.exe with PyInstaller.
+rem Build both one-file executables with PyInstaller.
 cd /d "%~dp0"
 .venv\Scripts\pyinstaller.exe valt.spec --clean --noconfirm
 if errorlevel 1 (
@@ -7,4 +7,6 @@ if errorlevel 1 (
     exit /b 1
 )
 echo.
-echo Build finished: dist\valt.exe
+echo Build finished:
+echo   dist\valt.exe       ^(GUI + CLI^)
+echo   dist\valt-cli.exe   ^(CLI only^)

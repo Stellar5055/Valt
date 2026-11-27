@@ -179,6 +179,30 @@ def test_slots_override_lands_in_the_header(tmp_path, passwords):
     assert read_header(p)[0] == 4
 
 
+def test_interactive_create_asks_for_compartments(tmp_path, passwords, capsys, monkeypatch):
+    folder = make_folder(tmp_path, "tax docs")
+    answers = iter(["y", str(folder), "", "n"])
+    monkeypatch.setattr(cli, "input", lambda prompt="": next(answers), raising=False)
+    p = tmp_path / "v.valt"
+    passwords += ["longenough", "longenough"]
+    cli.main(["create", str(p)])
+    seen = open_container(p, "longenough")
+    assert [c["name"] for c in seen] == ["tax docs"]
+
+
+def test_interactive_add_appends_a_compartment(tmp_path, passwords, monkeypatch):
+    p = tmp_path / "v.valt"
+    first = make_folder(tmp_path, "first")
+    create(p, [(str(first), "longenough", "first")])
+    second = make_folder(tmp_path, "second")
+    answers = iter([str(second), "", "2"])
+    monkeypatch.setattr(cli, "input", lambda prompt="": next(answers), raising=False)
+    passwords += ["longenough", "longenough"]
+    cli.main(["add", str(p)])
+    seen = open_container(p, "longenough")
+    assert [c["name"] for c in seen] == ["first", "second"]
+
+
 def test_extract_compartment_picker_rejects_bad_choice(tmp_path, passwords, capsys,
                                                        monkeypatch):
     f1 = make_folder(tmp_path, "photos")

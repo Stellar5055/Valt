@@ -1,4 +1,4 @@
-import argparse, sys, os, getpass, time
+﻿import argparse, sys, os, getpass, time
 from valt.container import FormatError, read_header
 from valt.vault import create, open_container, change_password, remove, add
 from valt.unpacker import extract_all, verify_compartment
@@ -95,7 +95,7 @@ class Progress:
         line = f"\r{self.verb}{who} {pct:.0f}%"
         if 0 < done < total:
             eta = (now - self.start) * (total / done - 1)
-            line += f" · ETA {fmt_eta(eta)}"
+            line += f" Â· ETA {fmt_eta(eta)}"
         print(line + "   ", end="", flush=True)
         self.drawing = True
 
@@ -107,20 +107,39 @@ class Progress:
 def do_create(args):
     print("Pick strong, unique passwords. Forgotten passwords can never be recovered.\n")
 
-    if args.label and len(args.folders) > 1:
-        print("--label works with exactly one --folder.")
-        sys.exit(1)
-
     compartments = []
-    total = len(args.folders)
-    for i, folder in enumerate(args.folders, start=1):
-        if not os.path.isdir(folder):
-            print(f"Not a valid folder: {folder}")
+
+    if args.folders:
+        # flag mode: folders and labels come from the command line,
+        # only the passwords are asked for
+        if args.label and len(args.folders) > 1:
+            print("--label works with exactly one --folder.")
             sys.exit(1)
-        shown = os.path.basename(os.path.normpath(folder))
-        print(f"Compartment {i} of {total}: '{shown}'")
-        pw = ask_password(confirm=True, for_name=shown)
-        compartments.append((folder, pw, args.label or ""))
+        total = len(args.folders)
+        for i, folder in enumerate(args.folders, start=1):
+            if not os.path.isdir(folder):
+                print(f"Not a valid folder: {folder}")
+                sys.exit(1)
+            shown = os.path.basename(os.path.normpath(folder))
+            print(f"Compartment {i} of {total}: '{shown}'")
+            pw = ask_password(confirm=True, for_name=shown)
+            compartments.append((folder, pw, args.label or ""))
+    else:
+        # interactive mode: the classic loop, one compartment at a time
+        while True:
+            ans = input("Add a compartment? y/n: ").strip().lower()
+            if ans in ("n", "no"):
+                break
+            folder = input("Folder path: ").strip()
+            if not os.path.isdir(folder):
+                print("Not a valid folder, try again")
+                continue
+            label = input("Label (Optional, Enter to skip): ").strip()
+            if len(label.encode("utf-8")) > 31:
+                print("Label too long, try again with a shorter one.")
+                continue
+            pw = ask_password(confirm=True)
+            compartments.append((folder, pw, label))
 
     if not compartments:
         print("No compartments added")
@@ -231,7 +250,7 @@ def do_change_pw(args):
     print(f"Changing the password for '{comp['name']}'.")
     new_pw = ask_password(confirm=True)
     change_password(args.path, pw, new_pw, slot=comp["slot"])
-    print(f"✔ Password changed for '{comp['name']}'.")
+    print(f"âœ” Password changed for '{comp['name']}'.")
 
 
 def do_remove(args):
@@ -250,7 +269,7 @@ def do_remove(args):
     if name is None:
         print("No compartments found for this password.")
         sys.exit(1)
-    print(f"✔ Removed '{name}'.")
+    print(f"âœ” Removed '{name}'.")
 
 
 def do_verify(args):
@@ -266,9 +285,9 @@ def do_verify(args):
                                      v["segment_len"], v["folder_key"], v["index_len"],
                                      progress=progress.update, label=v["name"])
         if ok:
-            print(f"✔ '{v['name']}': {len(v['entries'])} files verified")
+            print(f"âœ” '{v['name']}': {len(v['entries'])} files verified")
         else:
-            print(f"✘ '{v['name']}': corrupted at '{bad}'")
+            print(f"âœ˜ '{v['name']}': corrupted at '{bad}'")
             failed = True
     if failed:
         sys.exit(1)
@@ -280,19 +299,53 @@ def do_add(args):
     print("pick holds a compartment whose password you have forgotten, writing")
     print("here will destroy it.\n")
 
-    if not os.path.isdir(args.folder):
-        print(f"Not a valid folder: {args.folder}")
-        sys.exit(1)
-
-    shown = os.path.basename(os.path.normpath(args.folder))
-    pw = ask_password(confirm=True, for_name=shown)
-
     progress = Progress("packing")
-    name = add(args.path, args.folder, pw, args.label, args.slot, progress=progress.update)
-    print(f"✔ Added '{name}' in slot {args.slot}.")
+
+    if args.folder:
+        # flag mode: everything from flags, only the password is asked
+        if not os.path.isdir(args.folder):
+            print(f"Not a valid folder: {args.folder}")
+            sys.exit(1)
+        shown = os.path.basename(os.path.normpath(args.folder))
+        pw = ask_password(confirm=True, for_name=shown)
+        name = add(args.path, args.folder, pw, args.label, args.slot,
+                   progress=progress.update)
+    else:
+        # interactive mode: folder, label and password are asked
+        folder = input("Folder path: ").strip()
+        if not os.path.isdir(folder):
+            print(f"Not a valid folder: {folder}")
+            sys.exit(1)
+        label = input("Label (Optional, Enter to skip): ").strip()
+        if len(label.encode("utf-8")) > 31:
+            print("Label too long, try again with a shorter one.")
+            sys.exit(1)
+        pw = ask_password(confirm=True, for_name=os.path.basename(os.path.normpath(folder)))
+
+        views = open_container(args.path, pw)
+        used = {v["slot"] for v in views}
+        free = [i for i in range(slot_count) if i not in used]
+        if not free:
+            print("All slots are occupied in this vault.")
+            sys.exit(1)
+        slot = free[0]
+
+        name = add(args.path, folder, pw, label, slot, progress=progress.update)
+
+    print(f"âœ” Added '{name}' in slot {args.slot}.")
 
 
 def main(argv=None):
+    # Windows consoles often use legacy code pages (cp1252 and friends) that
+    # cannot encode the check/cross marks in status messages. Degrade to '?'
+    # instead of crashing with UnicodeEncodeError mid-command.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(errors="replace")
+            except Exception:
+                pass
+
     parser = argparse.ArgumentParser(
         prog="valt",
         description="Valt - one file, many folders, each behind its own password.",
@@ -315,8 +368,10 @@ def main(argv=None):
                        description="builds a new .valt vault and locks each --folder into "
                                    "its own compartment, behind its own password (asked "
                                    "interactively - never read from the command line). "
-                                   "the vault is packed: exactly its contents plus a "
-                                   "small random overhead.")
+                                   "give --folder once or more to pack without further "
+                                   "questions; without them, compartments are asked for "
+                                   "interactively. the vault is packed: exactly its "
+                                   "contents plus a small random overhead.")
     p.add_argument("path", help="vault file to create, e.g. my.valt")
     p.add_argument("--folder", action="append", default=[], dest="folders", metavar="DIR",
                    help="folder to lock into its own compartment (repeat for more)")
@@ -351,12 +406,18 @@ def main(argv=None):
     p.add_argument("path", help="vault file")
     p.set_defaults(func=do_verify)
 
-    p = sub.add_parser("add", help="append a new compartment to an existing vault")
+    p = sub.add_parser("add", help="append a new compartment to an existing vault",
+                       description="appends a new compartment to an existing vault. "
+                                   "with --folder given, no further questions beyond "
+                                   "the password; without it, folder and label are "
+                                   "asked interactively.")
     p.add_argument("path", help="vault file")
-    p.add_argument("--folder", required=True, help="folder to lock into the new compartment")
+    p.add_argument("--folder", default=None,
+                   help="folder to lock into the new compartment "
+                        "(without it, folder and label are asked interactively)")
     p.add_argument("--label", default="", metavar="NAME",
                    help="compartment label; default: the folder's name (max 31 bytes)")
-    p.add_argument("--slot", type=int, required=True, metavar="N",
+    p.add_argument("--slot", type=int, default=None, metavar="N",
                    help="which safe to lock this compartment into (read the warning first)")
     p.set_defaults(func=do_add)
 
@@ -376,3 +437,4 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("Aborted.")
         sys.exit(1)
+

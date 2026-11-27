@@ -1,7 +1,7 @@
 import os, secrets
 from valt.crypto import new_key, random_bytes, u16
 from valt.container import write_skeleton, read_header
-from valt.safes import build_payload, wrap_safe, try_open_safe, safe_aad, resolve_label, resolve_label
+from valt.safes import build_payload, wrap_safe, try_open_safe, safe_aad, resolve_label
 from valt.packer import pack_folder
 from valt.unpacker import read_index
 
@@ -135,9 +135,9 @@ def add(path, folder, password, name, slot, progress=None):
     slot_count, data_offset = read_header(path)
     if not 0 <= slot < slot_count:
         raise ValueError(f"slot {slot} is out of range 0..{slot_count - 1}")
+    name = resolve_label(folder, name)
 
     folder_key = new_key()
-    name = resolve_label(folder, name)
     segment_offset, segment_len, index_len = pack_folder(path, folder, folder_key,
                                                          progress=progress, label=name)
     payload = build_payload(folder_key, segment_offset, segment_len, index_len, name)
