@@ -1,9 +1,9 @@
 {
   "version": "2026.11.27",
-  "url": "https://github.com/Stellar5055/Valt/releases/latest/download/valt.zip",
+  "hash": "6876f23b3d9ed4136e23276407bc4950ce18ea343433d705e1f27a71ab3fb5f6",
   "bin": [
     "valt.exe",
     "valt-cli.exe"
   ],
-  "hash": "155251d6f8fab25fa31fced666e1379263e3471ee54a67fbe2a66e858d8065f6"
+  "url": "https://github.com/Stellar5055/Valt/releases/latest/download/valt.zip"
 }
