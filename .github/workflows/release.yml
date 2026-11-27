@@ -64,7 +64,7 @@ jobs:
 
       - name: Bump the scoop manifest version and hash
         run: |
-          $version = Get-Date -Format "yyyy.MM.dd"
+          $version = "$(Get-Date -Format 'yyyy.MM.dd')-$($env:GITHUB_SHA.Substring(0, 7))"
           $zipHash = (Get-FileHash dist\valt.zip -Algorithm SHA256).Hash.ToLower()
           @{ version = $version
              url = "https://github.com/Stellar5055/Valt/releases/latest/download/valt.zip"
