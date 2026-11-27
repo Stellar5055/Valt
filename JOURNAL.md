@@ -29,3 +29,5 @@
 ## Day 5
 
 - First i changed the pyinstaller spec to make a valt.exe and valt-cli.exe, the cli one has no gui, its slightly smaller(normal - 15MB, cli - 12MB) i fixed another cli bug i found which is interactive mode stopped working, then i worked on deslopping and fixing the gui
+
+- Then worked a lot - vibecoded most of this, on adding features, changing a lot of things, all tiny tiny things - like .valt file association, GUI compacting and redesigning, start menue entry, scoop and irm distribution, github ci with auto release building, etc, and towards the end, also added logo for the app and the .valt files - both were made with ai, implementaed them. then i did some research on options to have a shorter install command, but couldnt find a reliable free option, so decided to leave the long command for now. So project is almost done, now i have to write readme, make a demo video, and im done
