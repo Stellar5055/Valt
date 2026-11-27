@@ -10,7 +10,9 @@ You can unlock that file with different passwords to open different containers. 
 
 ## Demo
 
-<video controls src="Demo.mp4" title="Demo"></video>
+
+https://github.com/user-attachments/assets/c1ff5696-6c1a-43d1-9905-a031054592a8
+
 
 This is a short demo video showing a demo of the gui version
 
