@@ -1,7 +1,6 @@
-"""Tests on every push and PR.
+# Tests on every push and PR.
+# Windows runner because the GUI tests open real Tk windows.
 
-Windows runner because the GUI tests open real Tk windows.
-"""
 name: test
 
 on:

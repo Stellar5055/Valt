@@ -1,10 +1,8 @@
-"""Build the exes and refresh the rolling 'latest' release.
+# Build the exes and refresh the rolling 'latest' release.
+# Runs after every push to main: pytest as a gate, then build.bat, then the
+# exes + SHA256SUMS.txt + zip replace the assets on the 'latest' release,
+# and the scoop manifest version is bumped back onto main.
 
-Runs after every push to main: pytest as a gate, then build.bat, then the
-two exes replace the assets on the 'latest' release (created on first run,
-tag moved to the fresh commit). The Releases page always serves the
-current build at .../releases/latest.
-"""
 name: release
 
 on:
@@ -73,7 +71,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add bucket\valt.json
-          if (-not (git diff --staged --quiet)) {
-            git commit -m "scoop: bump manifest to $version [skip ci]"
-            git push
-          }
+          git diff --staged --quiet || (git commit -m "scoop: bump manifest to $version [skip ci]" && git push)
