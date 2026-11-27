@@ -69,7 +69,8 @@ jobs:
           @{ version = $version
              url = "https://github.com/Stellar5055/Valt/releases/latest/download/valt.zip"
              bin = @("valt.exe", "valt-cli.exe")
-             hash = $zipHash } | ConvertTo-Json | Set-Content bucket\valt.json -Encoding ascii
+             shortcuts = @(, @("valt.exe", "Valt", ""), @("valt-cli.exe", "Valt CLI", ""))
+             hash = $zipHash } | ConvertTo-Json -Depth 5 | Set-Content bucket\valt.json -Encoding ascii
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add bucket\valt.json

@@ -34,7 +34,7 @@ exe_full = EXE(
     debug=False,
     strip=False,
     upx=False,          # UPX-packed exes attract antivirus - keep off
-    console=True,       # the CLI mode needs the console; the GUI hides it when owned
+    console=False,      # pure GUI app: no terminal window, ever
     icon=None,
 )
 

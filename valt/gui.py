@@ -33,24 +33,6 @@ CHUNK = 65536
 NAME_LIMIT = 31
 
 
-def hide_console_if_owned():
-    """When the packaged exe is double-clicked it spawns its own console;
-    hide that window. Launched from a real terminal, leave it alone."""
-    if os.name != "nt":
-        return
-    try:
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        user32 = ctypes.windll.user32
-        buf = (ctypes.c_uint * 1)()
-        if kernel32.GetConsoleProcessList(buf, 1) == 1:
-            hwnd = kernel32.GetConsoleWindow()
-            if hwnd:
-                user32.ShowWindow(hwnd, 0)          # SW_HIDE
-    except Exception:
-        pass
-
-
 class Track:
     """Holds the latest progress report; polled by the UI thread."""
 
@@ -812,6 +794,5 @@ def ensure_valt_association():
 
 
 def run_gui(initial_vault=None):
-    hide_console_if_owned()
     ensure_valt_association()
     App(initial_vault=initial_vault).mainloop()

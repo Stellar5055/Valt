@@ -2,23 +2,18 @@ import os
 import sys
 
 from valt.gui import run_gui
-from valt.cli import main
 
 
 def run(argv=None):
-    """The full build's entry point.
+    """The GUI build's entry point. valt.exe is windowed (no console), so it
+    never forwards to the CLI - that is valt-cli.exe's job.
 
-    One existing .valt file -> GUI with that vault selected (double-click
-    in Explorer). Any other arguments -> CLI. No arguments -> GUI."""
+    An argument pointing at an existing .valt file (double-click in Explorer)
+    selects that vault for unlocking; anything else is ignored."""
     args = sys.argv[1:] if argv is None else argv
-    if (len(args) == 1 and args[0].lower().endswith(".valt")
-            and os.path.isfile(args[0])):
-        run_gui(initial_vault=args[0])
-        return "gui-file"
-    if args:
-        main(args)
-        return "cli"
-    run_gui()
+    vault = next((a for a in args
+                  if a.lower().endswith(".valt") and os.path.isfile(a)), None)
+    run_gui(initial_vault=vault)
     return "gui"
 
 
