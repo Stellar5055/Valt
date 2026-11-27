@@ -48,9 +48,15 @@ jobs:
               --title "Latest build" --notes "Current build from main."
           }
 
+      - name: Write SHA256SUMS.txt
+        run: |
+          $lines = Get-FileHash dist\valt.exe, dist\valt-cli.exe -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) }
+          $lines | Set-Content dist\SHA256SUMS.txt -Encoding ascii
+
       - name: Replace the exes on the latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload latest dist\valt.exe dist\valt-cli.exe `
+          gh release upload latest dist\valt.exe dist\valt-cli.exe dist\SHA256SUMS.txt `
             --repo $env:GITHUB_REPOSITORY --clobber
