@@ -129,9 +129,7 @@ def remove(path, password, slot):
 
 
 def add(path, folder, password, name, slot, progress=None):
-    """Append a new compartment at end-of-file and lock it into `slot`.
-    The CLI must warn: if that slot secretly holds a compartment whose
-    password is forgotten, writing here destroys it."""
+    """Append a new compartment at end-of-file and lock it into `slot`."""
     slot_count, data_offset = read_header(path)
     if not 0 <= slot < slot_count:
         raise ValueError(f"slot {slot} is out of range 0..{slot_count - 1}")

@@ -7,6 +7,7 @@ results. The format layer never renders anything.
 
 import os
 import queue
+import sys
 import threading
 import time
 import tkinter as tk
@@ -19,6 +20,14 @@ from valt.safes import resolve_label
 from valt.unpacker import extract_all, verify_compartment
 from valt.vault import create, open_container, change_password, remove, add
 from valt.cli import human, fmt_eta
+
+# Drag & drop needs the tkinterdnd2 package; without it the app still runs,
+# just without drop support.
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    _AppBase = TkinterDnD.Tk
+except ImportError:
+    _AppBase = tk.Tk
 
 CHUNK = 65536
 NAME_LIMIT = 31
@@ -204,8 +213,8 @@ class AddCompartmentDialog(Dialog):
         self.wait_window()
 
 
-class App(tk.Tk):
-    def __init__(self):
+class App(_AppBase):
+    def __init__(self, initial_vault=None):
         super().__init__()
         self.title("Valt")
         self.geometry("420x300")
@@ -223,8 +232,49 @@ class App(tk.Tk):
         self._last_result = None     # worker's return value, shown by on_done
 
         self._build()
+        if initial_vault:                  # launched by double-clicking a .valt
+            path = os.path.normpath(initial_vault)
+            self.vault_path = path
+            self.vault_label_var.set(os.path.basename(path))
+            self.status_var.set(f"Vault: {path} - enter password and Unlock.")
+            self.after(100, self.pw_entry.focus_set)   # straight to the password
         self._refresh_buttons()
-        self.status_var.set("Open a vault, or create a new one.")
+
+        # drag & drop: a .valt anywhere opens it, a folder stages a compartment
+        try:
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<Drop>>", self._on_drop)
+        except Exception:
+            pass                       # tkinterdnd2 missing - run without drops
+
+    def _on_drop(self, event):
+        candidates = list(self.tk.splitlist(event.data))
+        # Tcl list parsing eats backslashes from unbraced paths; real drops
+        # arrive braced, but if nothing matches, try the raw string itself.
+        if not any(os.path.exists(p) for p in candidates) \
+                and os.path.exists(event.data):
+            candidates = [event.data]
+        for p in candidates:           # a .valt file wins: select it for unlocking
+            if p.lower().endswith(".valt") and os.path.isfile(p):
+                self.vault_path = os.path.normpath(p)
+                self.vault_label_var.set(os.path.basename(self.vault_path))
+                self._refresh_buttons()
+                self.status_var.set(f"Vault: {self.vault_path} - enter password")
+                self.pw_entry.focus_set()
+                return
+        for p in candidates:           # a folder stages a compartment (Create tab)
+            if os.path.isdir(p):
+                dlg = AddCompartmentDialog(self, folder=os.path.normpath(p))
+                dlg.show()
+                if dlg.result:
+                    folder, pw, label = dlg.result
+                    self.pending.append({"folder": folder, "password": pw,
+                                         "label": label})
+                    self.rows_tree.insert("", "end", text=label,
+                                          values=(folder, "●●●●●●"))
+                    self._refresh_buttons()
+                return
+        self.status_var.set("Drop a .valt file or a folder.")
 
     # ---------- layout ----------
 
@@ -248,8 +298,9 @@ class App(tk.Tk):
                   anchor="w").pack(fill="x", padx=5, pady=(0, 5))
 
         self.action_buttons = [self.btn_unlock, self.btn_open_vault,
-                               self.btn_create_vault, self.btn_edit_row,
-                               self.btn_remove_row, *self.op_buttons.values()]
+                               self.btn_add_comp, self.btn_create_vault,
+                               self.btn_edit_row, self.btn_remove_row,
+                               *self.op_buttons.values()]
 
     def _build_unlock_tab(self, tab):
         tab.columnconfigure(0, weight=1)
@@ -267,11 +318,11 @@ class App(tk.Tk):
         prow.grid(row=1, column=0, sticky="ew", padx=5, pady=3)
         ttk.Label(prow, text="Password:").pack(side="left")
         self.unlock_pw_var = tk.StringVar()
-        e = ttk.Entry(prow, textvariable=self.unlock_pw_var, show="*")
-        e.pack(side="left", fill="x", expand=True, padx=6)
+        self.pw_entry = ttk.Entry(prow, textvariable=self.unlock_pw_var, show="*")
+        self.pw_entry.pack(side="left", fill="x", expand=True, padx=6)
         self.btn_unlock = ttk.Button(prow, text="Unlock", command=self.unlock_vault)
         self.btn_unlock.pack(side="left")
-        e.bind("<Return>", lambda event: self.unlock_vault())
+        self.pw_entry.bind("<Return>", lambda event: self.unlock_vault())
 
         self.tree = ttk.Treeview(tab, columns=("size",), height=5, selectmode="browse")
         self.tree.heading("#0", text="Compartment / file")
@@ -282,6 +333,10 @@ class App(tk.Tk):
 
         actions = ttk.Frame(tab)
         actions.grid(row=3, column=0, sticky="ew", padx=5, pady=3)
+        self.btn_add_comp = ttk.Button(actions, text="Add compartment…",
+                                       command=self.start_add_compartment,
+                                       state="disabled")
+        self.btn_add_comp.pack(side="left", padx=2)
         self.op_buttons = {}
         for text, command in (
             ("Extract…", self.start_extract),
@@ -354,6 +409,42 @@ class App(tk.Tk):
         self.rows_tree.item(item, text=label, values=(folder, "●●●●●●"))
         self._refresh_buttons()
 
+    def start_add_compartment(self):
+        """Append a new compartment to the chosen vault (CLI 'add')."""
+        if not self.vault_path:
+            messagebox.showinfo("Valt", "Choose a vault file first.")
+            return
+        dlg = AddCompartmentDialog(self, title="Add compartment to vault")
+        dlg.show()          # modal: wait here until the user closes the window
+        if dlg.result is None:
+            return
+        folder, pw, label = dlg.result
+
+        path = self.vault_path
+
+        def work(update):
+            # New compartments go into the last slot: spares were appended
+            # after the compartments at create time, so it is the likeliest
+            # free one. Never write into a slot already seen occupied.
+            slot_count, _ = read_header(path)
+            used = {v["slot"] for v in self.views}
+            for s in range(slot_count - 1, -1, -1):
+                if s not in used:
+                    return add(path, folder, pw, label, s, progress=update), s
+            raise ValueError("This vault is full - no free slots left.")
+
+        def done():
+            name, slot = self._last_result
+            if self.views:                     # keep unlocked views, add the new one
+                for v in open_container(path, pw):
+                    if v["slot"] == slot:
+                        v["password"] = pw     # in-memory only (P7)
+                        self.views.append(v)
+                self._show_views()
+            self.status_var.set(f"Added '{name}'.")
+
+        self._run(work, "adding", done)
+
     def remove_selected(self):
         item = self.rows_tree.focus()
         if not item:
@@ -395,6 +486,7 @@ class App(tk.Tk):
         if picked:
             self.vault_path = os.path.normpath(picked)
             self.vault_label_var.set(os.path.basename(self.vault_path))
+            self._refresh_buttons()
             self.status_var.set(f"Vault: {self.vault_path}")
 
     def _set_busy(self, busy):
@@ -409,6 +501,7 @@ class App(tk.Tk):
         for b in self.op_buttons.values():
             b.configure(state=state)
         self.btn_lock.configure(state=state)
+        self.btn_add_comp.configure(state="normal" if self.vault_path else "disabled")
         # create tab: Edit/Remove only make sense with a selected row
         sel = "normal" if self.rows_tree.selection() else "disabled"
         self.btn_edit_row.configure(state=sel)
@@ -572,12 +665,7 @@ class App(tk.Tk):
             messagebox.showinfo("Valt", "Unlock a compartment first.")
             return
         if not messagebox.askyesno(
-                "Valt", f"Remove '{comp['name']}' from this vault?\n\n"
-                        "Old copies (backups) still contain it."):
-            return
-        if not messagebox.askyesno(
-                "Valt", f"Remove '{comp['name']}' from this vault?\n\n"
-                        "Old copies (backups) still contain it."):
+                "Valt", f"Remove '{comp['name']}' from this vault?"):
             return
 
         def work(update):
@@ -670,6 +758,60 @@ class CreateVaultDialog(Dialog):
         self.destroy()
 
 
-def run_gui():
+def ensure_valt_association():
+    """Point the .valt file type at this exe - automatically, on first open.
+
+    Writes HKCU only (per-user, no admin needed). Politeness rules:
+    - only when packaged (from source, python.exe is nothing to associate)
+    - never steals .valt from another app that registered it
+    - never fights Explorer's 'Open with' choice (UserChoice)
+    - re-points the command if the exe moved; refreshes Explorer."""
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return
+    try:
+        import winreg
+        exe = sys.executable
+        command = f'"{exe}" "%1"'
+
+        # Explorer's explicit per-user choice wins; never fight it.
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion"
+                                r"\Explorer\FileExts\.valt\UserChoice") as k:
+                if winreg.QueryValueEx(k, "ProgId")[0] != "Valt.vault":
+                    return
+        except OSError:
+            pass                                   # no user choice yet - proceed
+
+        # Another app registered .valt? Leave it alone.
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Classes\.valt") as k:
+                if winreg.QueryValueEx(k, "")[0] not in ("", "Valt.vault"):
+                    return
+        except OSError:
+            pass                                   # key absent - ours to claim
+
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                              r"Software\Classes\Valt.vault") as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "Valt Vault")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                              r"Software\Classes\Valt.vault\shell\open\command") as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, command)
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                              r"Software\Classes\Valt.vault\DefaultIcon") as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, f'"{exe}",0')
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                              r"Software\Classes\.valt") as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "Valt.vault")
+
+        import ctypes
+        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
+    except Exception:
+        pass                       # association is best-effort; never block startup
+
+
+def run_gui(initial_vault=None):
     hide_console_if_owned()
-    App().mainloop()
+    ensure_valt_association()
+    App(initial_vault=initial_vault).mainloop()

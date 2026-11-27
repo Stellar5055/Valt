@@ -1,4 +1,4 @@
-﻿import argparse, sys, os, getpass, time
+import argparse, sys, os, getpass, time
 from valt.container import FormatError, read_header
 from valt.vault import create, open_container, change_password, remove, add
 from valt.unpacker import extract_all, verify_compartment
@@ -95,7 +95,7 @@ class Progress:
         line = f"\r{self.verb}{who} {pct:.0f}%"
         if 0 < done < total:
             eta = (now - self.start) * (total / done - 1)
-            line += f" Â· ETA {fmt_eta(eta)}"
+            line += f" · ETA {fmt_eta(eta)}"
         print(line + "   ", end="", flush=True)
         self.drawing = True
 
@@ -105,7 +105,7 @@ class Progress:
 
 
 def do_create(args):
-    print("Pick strong, unique passwords. Forgotten passwords can never be recovered.\n")
+    print("Forgotten passwords can never be recovered.\n")
 
     compartments = []
 
@@ -250,7 +250,7 @@ def do_change_pw(args):
     print(f"Changing the password for '{comp['name']}'.")
     new_pw = ask_password(confirm=True)
     change_password(args.path, pw, new_pw, slot=comp["slot"])
-    print(f"âœ” Password changed for '{comp['name']}'.")
+    print(f"Password changed for '{comp['name']}'.")
 
 
 def do_remove(args):
@@ -260,7 +260,6 @@ def do_remove(args):
         print("No compartments found for this password.")
         sys.exit(1)
     comp = pick_compartment(views)
-    print("Removed from THIS file. Old copies (backups) still contain it.")
     ans = input("Remove this compartment? y/n: ").strip().lower()
     if ans not in ("y", "yes"):
         print("Aborted.")
@@ -269,7 +268,7 @@ def do_remove(args):
     if name is None:
         print("No compartments found for this password.")
         sys.exit(1)
-    print(f"âœ” Removed '{name}'.")
+    print(f"Removed '{name}'.")
 
 
 def do_verify(args):
@@ -285,9 +284,9 @@ def do_verify(args):
                                      v["segment_len"], v["folder_key"], v["index_len"],
                                      progress=progress.update, label=v["name"])
         if ok:
-            print(f"âœ” '{v['name']}': {len(v['entries'])} files verified")
+            print(f"'{v['name']}': {len(v['entries'])} files verified")
         else:
-            print(f"âœ˜ '{v['name']}': corrupted at '{bad}'")
+            print(f"FAILED: '{v['name']}': corrupted at '{bad}'")
             failed = True
     if failed:
         sys.exit(1)
@@ -295,11 +294,11 @@ def do_verify(args):
 
 def do_add(args):
     slot_count, data_offset = read_header(args.path)
-    print("You cannot see which slots are secretly occupied. If the slot you")
-    print("pick holds a compartment whose password you have forgotten, writing")
-    print("here will destroy it.\n")
-
     progress = Progress("packing")
+
+    # New compartments go into the last slot: spares were appended after the
+    # compartments at create time, so it is the likeliest free one.
+    slot = slot_count - 1
 
     if args.folder:
         # flag mode: everything from flags, only the password is asked
@@ -308,7 +307,7 @@ def do_add(args):
             sys.exit(1)
         shown = os.path.basename(os.path.normpath(args.folder))
         pw = ask_password(confirm=True, for_name=shown)
-        name = add(args.path, args.folder, pw, args.label, args.slot,
+        name = add(args.path, args.folder, pw, args.label, slot,
                    progress=progress.update)
     else:
         # interactive mode: folder, label and password are asked
@@ -322,17 +321,9 @@ def do_add(args):
             sys.exit(1)
         pw = ask_password(confirm=True, for_name=os.path.basename(os.path.normpath(folder)))
 
-        views = open_container(args.path, pw)
-        used = {v["slot"] for v in views}
-        free = [i for i in range(slot_count) if i not in used]
-        if not free:
-            print("All slots are occupied in this vault.")
-            sys.exit(1)
-        slot = free[0]
-
         name = add(args.path, folder, pw, label, slot, progress=progress.update)
 
-    print(f"âœ” Added '{name}' in slot {args.slot}.")
+    print(f"Added '{name}'.")
 
 
 def main(argv=None):
@@ -354,7 +345,7 @@ def main(argv=None):
             "  valt create my.valt --folder C:\\Users\\me\\taxes --folder E:\\Movies --slots 4\n"
             "  valt open my.valt\n"
             "  valt extract my.valt OUT --compartment taxes\n"
-            "  valt add my.valt --folder D:\\music --label Songs --slot 2\n"
+            "  valt add my.valt --folder D:\\music --label Songs\n"
             "\n"
             "passwords are always asked for interactively - they are never typed\n"
             "into the command line, so they never land in shell history.\n"
@@ -417,8 +408,6 @@ def main(argv=None):
                         "(without it, folder and label are asked interactively)")
     p.add_argument("--label", default="", metavar="NAME",
                    help="compartment label; default: the folder's name (max 31 bytes)")
-    p.add_argument("--slot", type=int, default=None, metavar="N",
-                   help="which safe to lock this compartment into (read the warning first)")
     p.set_defaults(func=do_add)
 
     args = parser.parse_args(argv)
