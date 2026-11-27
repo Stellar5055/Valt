@@ -34,4 +34,13 @@
 
 - Here is the semo video i made:
 
-<video controls src="Demo.mp4" title="Demo"></video>
+https://github.com/user-attachments/assets/c1ff5696-6c1a-43d1-9905-a031054592a8
+
+- After that, i wrote the readme in my own words, then did some cleaning up and made final commit. then i realized the video wouldnt load on github so i added it from the website
+
+- I am about to submit now
+
+
+## Notes
+
+I used ai, the use was mostly towards the end for gui and a lt of small features and bugs, but the actual system and the foundations are made by me - pls refer to agent sessions i exported to show how i used AI. I learned a lot about encryption while making this, i plan to make more projects involving these related things
