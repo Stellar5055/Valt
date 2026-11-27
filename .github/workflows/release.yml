@@ -48,9 +48,12 @@ jobs:
               --title "Latest build" --notes "Current build from main."
           }
 
+      - name: Zip the exes
+        run: Compress-Archive dist\valt.exe, dist\valt-cli.exe -DestinationPath dist\valt.zip -Force
+
       - name: Write SHA256SUMS.txt
         run: |
-          $lines = Get-FileHash dist\valt.exe, dist\valt-cli.exe -Algorithm SHA256 |
+          $lines = Get-FileHash dist\valt.exe, dist\valt-cli.exe, dist\valt.zip -Algorithm SHA256 |
             ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) }
           $lines | Set-Content dist\SHA256SUMS.txt -Encoding ascii
 
@@ -58,5 +61,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload latest dist\valt.exe dist\valt-cli.exe dist\SHA256SUMS.txt `
+          gh release upload latest dist\valt.exe dist\valt-cli.exe dist\valt.zip dist\SHA256SUMS.txt `
             --repo $env:GITHUB_REPOSITORY --clobber
+
+      - name: Bump the scoop manifest version
+        run: |
+          $version = Get-Date -Format "yyyy.MM.dd"
+          $manifest = Get-Content bucket\valt.json -Raw | ConvertFrom-Json
+          $manifest.version = $version
+          $manifest | ConvertTo-Json | Set-Content bucket\valt.json -Encoding ascii
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket\valt.json
+          if (-not (git diff --staged --quiet)) {
+            git commit -m "scoop: bump manifest to $version [skip ci]"
+            git push
+          }

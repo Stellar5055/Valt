@@ -1,0 +1,12 @@
+{
+    "version": "2026.11.27",
+    "url": "https://github.com/Stellar5055/Valt/releases/latest/download/valt.zip",
+    "bin": [
+        "valt.exe",
+        "valt-cli.exe"
+    ],
+    "hash": {
+        "url": "https://github.com/Stellar5055/Valt/releases/latest/download/SHA256SUMS.txt",
+        "find": "([a-fA-F0-9]{64})\\s+valt\\.zip"
+    }
+}
